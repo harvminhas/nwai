@@ -16,7 +16,12 @@ import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { getHomeCurrency, toHome as toHomeCurrency } from "@/lib/currencyUtils";
 import type { ToolName } from "@/lib/chat/tools";
 import { TOOL_NAMES } from "@/lib/chat/tools";
-import { averageCashFlow, cashFlowInputFromProfile } from "@/lib/monthlyCashFlow";
+import {
+  averageCashFlow,
+  cashFlowInputFromProfile,
+  getMonthlyCashFlow,
+} from "@/lib/monthlyCashFlow";
+import { formatMonthWithStatus, getCurrentMonth, isMonthInProgress } from "@/lib/monthAnchor";
 import { resolveWindowMonths, type TimeRange } from "@/lib/rangeUtils";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -238,20 +243,27 @@ export function executeGetMonthlyBreakdown(
     };
   }
 
+  const input = cashFlowInputFromProfile(profile, context);
+  const current = getCurrentMonth();
   const months = history.map((h) => {
-    const net        = h.incomeTotal - h.coreExpensesTotal;
+    const cf = getMonthlyCashFlow(input, h.yearMonth);
+    const inProgress = isMonthInProgress(h.yearMonth, current);
     const savingsRate =
-      h.incomeTotal > 0
-        ? `${((net / h.incomeTotal) * 100).toFixed(1)}%`
-        : "0.0%";
+      !inProgress && cf.savingsRate != null
+        ? `${(cf.savingsRate * 100).toFixed(1)}%`
+        : inProgress
+          ? null
+          : "0.0%";
 
     const entry: Record<string, unknown> = {
       month:        h.yearMonth,
-      income:       fmt(h.incomeTotal),
-      expenses:     fmt(h.coreExpensesTotal),
-      net:          fmt(net),
-      savings_rate: savingsRate,
+      label:        formatMonthWithStatus(h.yearMonth, inProgress),
+      income:       fmt(cf.moneyIn),
+      expenses:     fmt(cf.moneyOut),
+      net:          fmt(cf.leftover),
+      in_progress:  inProgress,
     };
+    if (savingsRate != null) entry.savings_rate = savingsRate;
 
     if ((h.debtPaymentsTotal ?? 0) > 0) {
       entry.debt_payments     = fmt(h.debtPaymentsTotal);
@@ -527,7 +539,6 @@ export function executeGetIncomeSummary(
   context: UserReviewContext,
 ): ToolResult {
   const { buildIncomeSummary } = require("@/lib/incomeSummary");
-  const { getRangeMonths } = require("@/lib/rangeUtils");
   
   const home = getHomeCurrency(profile);
   const fmt = makeFmt(home);
@@ -535,9 +546,19 @@ export function executeGetIncomeSummary(
   const rangeParam = (params.range as string | undefined) ?? "3mo";
   let rangeMonths: string[];
   
-  if (rangeParam === "3mo" || rangeParam === "12mo" || rangeParam === "ytd") {
-    const availableMonths = profile.allTxMonths.sort();
-    rangeMonths = getRangeMonths(rangeParam, availableMonths);
+  if (rangeParam === "3mo" || rangeParam === "12mo" || rangeParam === "ytd" || rangeParam.startsWith("month:")) {
+    const accountStatusMap = new Map(
+      (profile.accountStatusRecords ?? []).map((r: { accountSlug: string; status: string; statusDate: string }) => [
+        r.accountSlug,
+        { status: r.status, statusDate: r.statusDate },
+      ]),
+    );
+    rangeMonths = resolveWindowMonths(
+      rangeParam as TimeRange,
+      profile.monthlyHistory,
+      profile.statementHistory,
+      accountStatusMap,
+    ).months;
   } else {
     rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
   }
@@ -630,7 +651,6 @@ export function executeGetSpendingSummary(
   context: UserReviewContext,
 ): ToolResult {
   const { buildSpendingSummary } = require("@/lib/spendingSummary");
-  const { getRangeMonths } = require("@/lib/rangeUtils");
   
   const home = getHomeCurrency(profile);
   const fmt = makeFmt(home);
@@ -638,9 +658,19 @@ export function executeGetSpendingSummary(
   const rangeParam = (params.range as string | undefined) ?? "3mo";
   let rangeMonths: string[];
   
-  if (rangeParam === "3mo" || rangeParam === "12mo" || rangeParam === "ytd") {
-    const availableMonths = profile.allTxMonths.sort();
-    rangeMonths = getRangeMonths(rangeParam, availableMonths);
+  if (rangeParam === "3mo" || rangeParam === "12mo" || rangeParam === "ytd" || rangeParam.startsWith("month:")) {
+    const accountStatusMap = new Map(
+      (profile.accountStatusRecords ?? []).map((r: { accountSlug: string; status: string; statusDate: string }) => [
+        r.accountSlug,
+        { status: r.status, statusDate: r.statusDate },
+      ]),
+    );
+    rangeMonths = resolveWindowMonths(
+      rangeParam as TimeRange,
+      profile.monthlyHistory,
+      profile.statementHistory,
+      accountStatusMap,
+    ).months;
   } else {
     rangeMonths = rangeParam.split(",").map(m => m.trim()).filter(Boolean);
   }
@@ -813,18 +843,15 @@ export function executeGetNetWorth(profile: FinancialProfileCache): ToolResult {
   const month = profile.latestTxMonth ?? "";
   const nw = getNetWorth(profile, month);
   
-  // Calculate monthly change
-  const sortedHistory = [...profile.monthlyHistory].sort((a, b) => 
-    b.yearMonth.localeCompare(a.yearMonth)
+  const sortedHistory = [...profile.monthlyHistory].sort((a, b) =>
+    b.yearMonth.localeCompare(a.yearMonth),
   );
   const currentMonthData = sortedHistory[0];
   const lastMonthData = sortedHistory[1];
-  
+
   let monthlyChange = 0;
   if (currentMonthData && lastMonthData) {
-    const currentNW = currentMonthData.incomeTotal - currentMonthData.coreExpensesTotal;
-    const lastNW = lastMonthData.incomeTotal - lastMonthData.coreExpensesTotal;
-    monthlyChange = currentNW - lastNW;
+    monthlyChange = (currentMonthData.netWorth ?? 0) - (lastMonthData.netWorth ?? 0);
   }
   
   return {

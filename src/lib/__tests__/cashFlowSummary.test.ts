@@ -87,14 +87,14 @@ describe("selectCashFlowMonth", () => {
     ).toBe("2026-10");
   });
 
-  it("keeps an explicit click on the current unfinished month", () => {
+  it("does not keep an explicit click on the unfinished current month", () => {
     expect(
       selectCashFlowMonth(
         [{ yearMonth: "2026-10" }, { yearMonth: "2026-11" }],
         "2026-11",
         "2026-11",
       ),
-    ).toBe("2026-11");
+    ).toBe("2026-10");
   });
 
   it("keeps a click that is still in range", () => {
@@ -111,22 +111,23 @@ describe("selectCashFlowMonth", () => {
 });
 
 describe("formatCashFlowMonthLabel", () => {
-  it("labels the unfinished current month as so far", () => {
-    expect(formatCashFlowMonthLabel("2026-11", { currentMonth: "2026-11" })).toBe(
-      "Nov 2026 so far",
-    );
+  it("does not add a so-far suffix — Cash Flow uses complete months only", () => {
+    expect(formatCashFlowMonthLabel("2026-11", { currentMonth: "2026-11" })).toBe("Nov 2026");
     expect(
       formatCashFlowMonthLabel("2026-11", { short: true, currentMonth: "2026-11" }),
-    ).toBe("Nov so far");
+    ).toBe("Nov");
     expect(formatCashFlowMonthLabel("2026-10", { currentMonth: "2026-11" })).toBe(
       "Oct 2026",
     );
   });
 
-  it("uses so far in the summary sentence for the current month", () => {
+  it("does not say so far in the summary sentence", () => {
     expect(
       formatCashFlowSummarySentence("2026-11", 100, 40, 60, "CAD", "2026-11"),
-    ).toMatch(/Nov 2026 so far/);
+    ).toMatch(/Nov 2026/);
+    expect(
+      formatCashFlowSummarySentence("2026-11", 100, 40, 60, "CAD", "2026-11"),
+    ).not.toMatch(/so far/i);
   });
 });
 

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { monthsForCashFlowAverage } from "@/lib/cashFlowAverage";
+import { getCurrentMonth } from "@/lib/monthAnchor";
 import { aggregateSpendingByCategory } from "@/lib/spendingAggregation";
 
 /**
@@ -31,23 +33,16 @@ export async function GET(request: NextRequest) {
     // Get financial profile (cached)
     const profile = await getFinancialProfile(uid, db);
 
-    // Determine date range
-    const now = new Date();
-    const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-    
+    const currentYm = getCurrentMonth();
+    const availableMonths = [...new Set(profile.expenseTxns.map((t) => t.txMonth))].sort();
     let monthsBack = 12;
     if (window === "3mo") monthsBack = 3;
     if (window === "6mo") monthsBack = 6;
-    if (window === "all") monthsBack = 9999; // all time
-    
-    const cutoffDate = new Date(now);
-    cutoffDate.setMonth(cutoffDate.getMonth() - monthsBack);
-    const cutoffYm = `${cutoffDate.getFullYear()}-${String(cutoffDate.getMonth() + 1).padStart(2, "0")}`;
+    if (window === "all") monthsBack = Math.max(availableMonths.length, 1);
 
-    // Filter transactions to window
-    const filteredTxns = window === "all" 
-      ? profile.expenseTxns
-      : profile.expenseTxns.filter(t => t.txMonth >= cutoffYm && t.txMonth < currentYm);
+    const rangeMonths = monthsForCashFlowAverage(availableMonths, { lastNComplete: monthsBack });
+    const cutoffYm = rangeMonths[0] ?? null;
+    const filteredTxns = profile.expenseTxns.filter((t) => rangeMonths.includes(t.txMonth));
 
     // Count actual months with data
     const monthsSet = new Set(filteredTxns.map(t => t.txMonth));

@@ -16,6 +16,7 @@ import {
   CANONICAL_LINE_CONFIG,
   getCanonicalLineColor,
 } from "@/lib/canonicalChartConfig";
+import { formatMonthWithStatus, isMonthInProgress } from "@/lib/monthAnchor";
 import { SpendingCategoryRow } from "./SpendingCategoryRow";
 
 interface MonthlySeries {
@@ -85,9 +86,8 @@ interface DrilldownData {
   query?: string;
 }
 
-function formatMonthLabel(yearMonth: string): string {
-  const [year, month] = yearMonth.split("-");
-  return new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString("en-US", { month: "short" });
+function formatMonthLabel(yearMonth: string, short = true): string {
+  return formatMonthWithStatus(yearMonth, isMonthInProgress(yearMonth), undefined, { short });
 }
 
 interface DrilldownViewProps {

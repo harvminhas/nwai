@@ -26,6 +26,7 @@ import {
   selectionAfterRangeChange,
   sliceHistoryByRange,
 } from "@/lib/chartMonthSelection";
+import { formatMonthWithStatus, IN_PROGRESS_LABEL, isMonthInProgress } from "@/lib/monthAnchor";
 
 function shortMonthLabel(yearMonth: string): string {
   const [y, m] = yearMonth.split("-");
@@ -68,6 +69,7 @@ type Point = {
   netWorthSolid: number | null;    // null for estimated points (breaks solid line)
   netWorthDotted: number | null;   // null for real points (breaks dotted line)
   isEstimate: boolean;
+  isInProgress: boolean;
 };
 
 const RANGES = [
@@ -125,7 +127,7 @@ export default function NetWorthChart({
   followSelection = false,
   selectedYearMonth,
 }: {
-  history: { yearMonth: string; netWorth: number; totalAssets?: number; totalDebts?: number; expensesTotal?: number; isEstimate?: boolean }[];
+  history: { yearMonth: string; netWorth: number; totalAssets?: number; totalDebts?: number; expensesTotal?: number; isEstimate?: boolean; isInProgress?: boolean }[];
   isDebt?: boolean;
   currency?: string;
   /** Called when a real (non-estimated) month is picked, so a page can load that month. */
@@ -156,17 +158,19 @@ export default function NetWorthChart({
   // negative axis labels like "-CA$476k" when the balance is improving.
   const displayValue = (v: number) => isDebt ? Math.abs(v) : v;
 
-  const allPoints: Point[] = history.map(({ yearMonth, netWorth, totalAssets, totalDebts, isEstimate }) => {
+  const allPoints: Point[] = history.map(({ yearMonth, netWorth, totalAssets, totalDebts, isEstimate, isInProgress }) => {
     const dv = displayValue(netWorth);
+    const inProgress = isInProgress ?? isMonthInProgress(yearMonth);
     return {
       yearMonth,
       label: shortMonthLabel(yearMonth),
       netWorth: dv,
       totalAssets: totalAssets ?? 0,
       totalDebts: totalDebts ?? 0,
-      netWorthSolid: isEstimate ? null : dv,
-      netWorthDotted: isEstimate ? dv : null,
+      netWorthSolid: isEstimate && !inProgress ? null : dv,
+      netWorthDotted: isEstimate && !inProgress ? dv : null,
       isEstimate: isEstimate ?? false,
+      isInProgress: inProgress,
     };
   });
 
@@ -209,7 +213,7 @@ export default function NetWorthChart({
 
   function handleSelect(ym: string) {
     const pt = data.find((p) => p.yearMonth === ym);
-    if (!pt || pt.isEstimate) return;
+    if (!pt || (pt.isEstimate && !pt.isInProgress)) return;
     if (followSelection) {
       if (!isControlled) setInternalYm(ym);
       onPointSelect?.(ym);
@@ -378,7 +382,9 @@ export default function NetWorthChart({
         <div className="mt-4 rounded-lg border border-purple-100 bg-purple-50/40 p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-800">{longMonthLabel(selPt.yearMonth)}</p>
+              <p className="text-sm font-semibold text-gray-800">
+                {formatMonthWithStatus(selPt.yearMonth, selPt.isInProgress)}
+              </p>
 
               {/* Assets / Debts / Balance row */}
               {!isDebt && selPt.totalAssets > 0 && (
@@ -393,11 +399,15 @@ export default function NetWorthChart({
                   )}
                   <span className="text-gray-500">
                     Balance: <span className="font-semibold text-gray-700">{formatCurrencyFor(selPt.netWorth, currency)}</span>
-                    {selPt.isEstimate && (
+                    {selPt.isInProgress ? (
+                      <span className="ml-1.5 rounded-full bg-purple-50 border border-purple-200 px-1.5 py-0.5 text-[10px] font-medium text-purple-700">
+                        {IN_PROGRESS_LABEL}
+                      </span>
+                    ) : selPt.isEstimate ? (
                       <span className="ml-1.5 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
                         ~ estimated
                       </span>
-                    )}
+                    ) : null}
                   </span>
                 </div>
               )}
@@ -407,11 +417,15 @@ export default function NetWorthChart({
                 <p className="mt-0.5 text-xs text-gray-400">
                   Balance:{" "}
                   <span className="font-semibold text-gray-700">{formatCurrencyFor(selPt.netWorth, currency)}</span>
-                  {selPt.isEstimate && (
+                  {selPt.isInProgress ? (
+                    <span className="ml-2 rounded-full bg-purple-50 border border-purple-200 px-1.5 py-0.5 text-[10px] font-medium text-purple-700">
+                      {IN_PROGRESS_LABEL}
+                    </span>
+                  ) : selPt.isEstimate ? (
                     <span className="ml-2 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
                       ~ estimated
                     </span>
-                  )}
+                  ) : null}
                 </p>
               )}
 

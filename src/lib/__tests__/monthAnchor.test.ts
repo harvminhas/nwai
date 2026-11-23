@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getLastCompleteMonth, getCurrentMonth, formatMonthWithStatus } from "../monthAnchor";
+import { getLastCompleteMonth, getCurrentMonth, formatMonthWithStatus, listMonthsWithData, IN_PROGRESS_LABEL } from "../monthAnchor";
 
 describe("monthAnchor", () => {
   describe("getLastCompleteMonth", () => {
@@ -61,9 +61,9 @@ describe("monthAnchor", () => {
       expect(formatMonthWithStatus("2026-12", false)).toBe("Dec 2026");
     });
 
-    it("should format current month with '(in progress)' status", () => {
-      expect(formatMonthWithStatus("2026-10", true)).toBe("Oct 2026 (in progress)");
-      expect(formatMonthWithStatus("2027-01", true)).toBe("Jan 2027 (in progress)");
+    it("should format current month with the shared In progress label", () => {
+      expect(formatMonthWithStatus("2026-10", true)).toBe(`Oct 2026 (${IN_PROGRESS_LABEL})`);
+      expect(formatMonthWithStatus("2027-01", true)).toBe(`Jan 2027 (${IN_PROGRESS_LABEL})`);
     });
 
     it("should handle all months correctly", () => {
@@ -113,6 +113,23 @@ describe("monthAnchor", () => {
         "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06",
         "2026-07", "2026-08", "2026-09"
       ]);
+    });
+  });
+
+  describe("listMonthsWithData", () => {
+    it("includes the current month flagged in progress", () => {
+      const months = listMonthsWithData(
+        ["2026-09", "2026-10", "2026-11", "2026-09"],
+        { currentMonth: "2026-11" },
+      );
+      expect(months.map((m) => m.yearMonth)).toEqual(["2026-09", "2026-10", "2026-11"]);
+      expect(months.find((m) => m.yearMonth === "2026-11")?.isInProgress).toBe(true);
+      expect(months.find((m) => m.yearMonth === "2026-10")?.isInProgress).toBe(false);
+    });
+
+    it("does not invent the current month when it has no data", () => {
+      const months = listMonthsWithData(["2026-09", "2026-10"], { currentMonth: "2026-11" });
+      expect(months.map((m) => m.yearMonth)).toEqual(["2026-09", "2026-10"]);
     });
   });
 });

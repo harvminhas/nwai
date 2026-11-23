@@ -10,6 +10,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
 import { resolveWindowMonths } from "@/lib/rangeUtils";
+import { getCurrentMonth, isMonthInProgress, listMonthsWithData } from "@/lib/monthAnchor";
 import { buildSpendingSummary } from "@/lib/spendingSummary";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { merchantSlug } from "@/lib/applyRules";
@@ -36,6 +37,7 @@ function formatCurrency(amount: number, currency: string): string {
 interface MonthlySeries {
   yearMonth: string;
   amount: number;
+  isInProgress?: boolean;
 }
 
 interface RankedItem {
@@ -277,9 +279,15 @@ export async function GET(req: NextRequest) {
       accountStatusMap
     );
     
-    const windowMonths = windowResult.months;
-    
-    if (windowMonths.length === 0) {
+    const completeMonths = windowResult.months;
+    const currentYm = getCurrentMonth();
+    const currentHasSpend = profile.expenseTxns.some((t) => t.txMonth === currentYm);
+    const displayMonths = listMonthsWithData(
+      currentHasSpend ? [...completeMonths, currentYm] : completeMonths,
+    ).map((m) => m.yearMonth);
+    const windowMonths = displayMonths;
+
+    if (completeMonths.length === 0 && displayMonths.length === 0) {
       return NextResponse.json({
         level,
         breadcrumb: [{ label: "All spending" }],
@@ -318,7 +326,7 @@ export async function GET(req: NextRequest) {
       userReviews,
       profile.fxRates || {},
       profile.homeCurrency,
-      windowMonths
+      completeMonths,
     );
 
     // Build lookup map for monthlyHistory (arrays may not align with windowMonths)
@@ -345,19 +353,24 @@ export async function GET(req: NextRequest) {
     const adjustedAllSeries: MonthlySeries[] = windowMonths.map((ym, idx) => ({
       yearMonth: ym,
       amount: Math.max(0, (monthByYm.get(ym)?.total || 0) - scheduledDebtPerMonth[idx] + actualDebt.loanMonthlySeries[idx].amount),
+      isInProgress: isMonthInProgress(ym, currentYm),
     }));
 
-    const adjustedAllTotal = adjustedAllSeries.reduce((sum, m) => sum + m.amount, 0);
-    const adjustedAllAvg = adjustedAllTotal / windowMonths.length;
+    const completeCount = Math.max(1, completeMonths.length);
+    const adjustedAllTotal = adjustedAllSeries
+      .filter((m) => !isMonthInProgress(m.yearMonth, currentYm))
+      .reduce((sum, m) => sum + m.amount, 0);
+    const adjustedAllAvg = completeMonths.length > 0 ? adjustedAllTotal / completeCount : 0;
 
     // Keep original unadjusted series for non-Debt categories' comparison
     const allSpendingMonthlySeries: MonthlySeries[] = windowMonths.map(ym => ({
       yearMonth: ym,
       amount: monthByYm.get(ym)?.total || 0,
+      isInProgress: isMonthInProgress(ym, currentYm),
     }));
 
     const allTotal = allSpendingMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
-    const allAvg = allTotal / windowMonths.length;
+    const allAvg = allTotal / completeCount;
 
     if (level === "all") {
       // Level 1: All spending → Parent Categories
@@ -394,7 +407,7 @@ export async function GET(req: NextRequest) {
       // Rank parent categories
       let rankedItems: RankedItem[] = Array.from(parentCategoryMap.entries())
         .map(([parent, data]) => {
-          const catAvg = data.total / windowMonths.length;
+          const catAvg = data.total / completeCount;
           const last3 = data.monthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
           const trend = last3Avg - catAvg;
@@ -413,7 +426,7 @@ export async function GET(req: NextRequest) {
       // Use the actualDebt computed once for entire request
       const debtRowIndex = rankedItems.findIndex(item => item.name === "Debt");
       
-      const catAvg = actualDebt.loanTotal / windowMonths.length;
+      const catAvg = actualDebt.loanTotal / completeCount;
       const last3 = actualDebt.loanMonthlySeries.slice(-3);
       const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
       const trend = last3Avg - catAvg;
@@ -474,7 +487,7 @@ export async function GET(req: NextRequest) {
       });
 
       const categoryTotal = categoryMonthlySeries.reduce((sum, m) => sum + m.amount, 0);
-      const categoryAvg = categoryTotal / windowMonths.length;
+      const categoryAvg = categoryTotal / completeCount;
 
       // Special handling for Debt category (loan/card/oneOff split)
       if (parentCategory === "Debt") {
@@ -484,13 +497,13 @@ export async function GET(req: NextRequest) {
         const loanAccounts = actualDebt.accounts.filter(a => a.kind === "loan");
         const loanItems: RankedItem[] = loanAccounts.map(account => {
           const total = account.regularTotal;
-          const avg = total / windowMonths.length;
+          const avg = total / completeCount;
           const last3 = account.regularMonthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
           const trend = last3Avg - avg;
 
           // SubLabel: regular amount per month plus payment count
-          const regularPerMonth = total / windowMonths.length;
+          const regularPerMonth = total / completeCount;
           const subLabel = `usual payment - ${formatCurrency(regularPerMonth, profile.homeCurrency)}/mo - ${account.paymentCount} payment${account.paymentCount !== 1 ? 's' : ''}`;
 
           return {
@@ -510,12 +523,12 @@ export async function GET(req: NextRequest) {
         const cardAccounts = actualDebt.accounts.filter(a => a.kind === "card");
         const cardItems: RankedItem[] = cardAccounts.map(account => {
           const total = account.regularTotal;
-          const avg = total / windowMonths.length;
+          const avg = total / completeCount;
           const last3 = account.regularMonthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
           const trend = last3Avg - avg;
 
-          const regularPerMonth = total / windowMonths.length;
+          const regularPerMonth = total / completeCount;
           const subLabel = `estimated from ${account.paymentCount} payment${account.paymentCount !== 1 ? 's' : ''} - ${formatCurrency(regularPerMonth, profile.homeCurrency)}/mo`;
 
           return {
@@ -574,7 +587,7 @@ export async function GET(req: NextRequest) {
             { label: "Debt" },
           ],
           total: actualDebt.loanTotal, // Loan payments only (counted in spending)
-          avgPerMonth: actualDebt.loanTotal / windowMonths.length,
+          avgPerMonth: actualDebt.loanTotal / completeCount,
           monthlySeries: actualDebt.loanMonthlySeries,
           comparisonSeries: adjustedAllSeries, // Same basis as All spending (loans counted, cards not)
           rankedItems: [], // Not used when groups present
@@ -644,7 +657,7 @@ export async function GET(req: NextRequest) {
       // Rank merchants
       const rankedItems: RankedItem[] = Array.from(merchantMap.values())
         .map(data => {
-          const merchAvg = data.total / windowMonths.length;
+          const merchAvg = data.total / completeCount;
           const last3 = data.monthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
           const trend = last3Avg - merchAvg;
@@ -733,7 +746,7 @@ export async function GET(req: NextRequest) {
         // Header total = regularTotal (same as level 2 row)
         const total = accountData.regularTotal;
         const monthlySeries = accountData.regularMonthlySeries;
-        const avgPerMonth = total / windowMonths.length;
+        const avgPerMonth = total / completeCount;
 
         // Build extras map for quick lookup
         const extrasMap = new Map(accountData.extras.map(e => [e.yearMonth, e.amount]));
@@ -826,7 +839,7 @@ export async function GET(req: NextRequest) {
       });
 
       const merchantTotal = scopedTxns.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-      const merchantAvg = merchantTotal / windowMonths.length;
+      const merchantAvg = merchantTotal / completeCount;
 
       // Calculate spend in other parent categories
       const otherCategoriesTotal = allMerchantTxns
@@ -993,7 +1006,7 @@ export async function GET(req: NextRequest) {
           { label: `Search: "${query}"` },
         ],
         total: totalMatched,
-        avgPerMonth: totalMatched / windowMonths.length,
+        avgPerMonth: totalMatched / completeCount,
         monthlySeries: [], // No chart for search
         rankedItems,
         currency: profile.homeCurrency,

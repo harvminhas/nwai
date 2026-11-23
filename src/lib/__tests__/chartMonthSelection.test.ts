@@ -40,6 +40,14 @@ describe("latestSelectableMonth", () => {
       { yearMonth: "2026-10", isEstimate: true },
     ])).toBe("2026-10");
   });
+
+  it("selects the in-progress current month even when trailing estimates exist", () => {
+    expect(latestSelectableMonth([
+      { yearMonth: "2026-09", isEstimate: false },
+      { yearMonth: "2026-10", isEstimate: true },
+      { yearMonth: "2026-11", isEstimate: false, isInProgress: true },
+    ])).toBe("2026-11");
+  });
 });
 
 describe("selectionAfterRangeChange", () => {

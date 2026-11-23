@@ -42,7 +42,7 @@ function summary(overrides: Partial<IncomeSummary> = {}): IncomeSummary {
 describe("OverviewTab phone read layout", () => {
   it("puts the period label on its own line above the typical-month comparison", () => {
     const { container } = render(<OverviewTab summary={summary()} />);
-    const period = screen.getByText("Nov 2026 SO FAR");
+    const period = screen.getByText("Nov 2026 (In progress)");
     expect(period.className).toBe(INCOME_SO_FAR_PERIOD_CLASS);
     expect(period.className).toContain("whitespace-nowrap");
 

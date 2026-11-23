@@ -11,7 +11,7 @@ import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { merchantSlug } from "./applyRules";
 import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUtils";
 import { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
-import { getLastCompleteMonth } from "./monthAnchor";
+import { getCurrentMonth, getLastCompleteMonth, isMonthInProgress, listMonthsWithData } from "./monthAnchor";
 import { computeMonthlyBuckets } from "./monthlyBucketComputation";
 import { computeScheduledDebtPayments } from "./debtPayments";
 import { displayNameFromProfileAccount } from "./accountListLabel";
@@ -56,6 +56,7 @@ export interface MonthlySpendingSummary {
   essentials: number;
   flexible: number;
   categories: Array<{ category: string; amount: number; bucket: MoneyCoachBucket }>;
+  isInProgress?: boolean;
 }
 
 export interface BucketSummary {
@@ -185,6 +186,7 @@ export function spendingForMonth(
       amount: item.amount,
       bucket: item.bucket,
     })),
+    isInProgress: isMonthInProgress(result.yearMonth),
   };
 }
 
@@ -203,22 +205,21 @@ export function buildSpendingSummary(
   currency: string = "CAD",
   rangeMonths?: string[]
 ): SpendingSummary {
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = getCurrentMonth();
   const lastCompleteMonth = getLastCompleteMonth();
-  
-  // Get all complete months
+
   const monthSet = new Set<string>();
-  expenseTxns.forEach(t => {
-    if (t.txMonth < currentMonth) monthSet.add(t.txMonth);
+  expenseTxns.forEach((t) => {
+    if (t.txMonth) monthSet.add(t.txMonth);
   });
-  const allMonths = Array.from(monthSet).sort();
-  
+  const allMonths = listMonthsWithData(Array.from(monthSet)).map((m) => m.yearMonth);
+
   // Same month set and mean as dashboard / Cash Flow (include $0 months, no rounding)
   const calculationMonths = monthsForCashFlowAverage(allMonths, {
     rangeMonths,
     lastNComplete: 3,
   });
-  const last12Months = allMonths.slice(-12); // Keep for backwards compatibility (page charts)
+  const last12Months = allMonths.slice(-12); // includes current month when it has data
   
   const monthlyHistory: MonthlySpendingSummary[] = last12Months.map((yearMonth) =>
     spendingForMonth(
@@ -247,10 +248,22 @@ export function buildSpendingSummary(
     ),
   );
   
-  // Keep last 3 months for backwards compatibility
-  const last3Months = last12Months.slice(-3);
-  const last3Data = monthlyHistory.slice(-3);
-  const last3Totals = last3Data.map(m => m.total);
+  // Last 3 complete months for averages / backwards-compat fields
+  const last3Months = calculationMonths.slice(-3);
+  const last3Data = last3Months.map(
+    (ym) =>
+      monthlyHistory.find((m) => m.yearMonth === ym) ??
+      spendingForMonth(
+        ym,
+        expenseTxns,
+        accountSnapshots,
+        debtPaymentHistory,
+        userReviews,
+        fxRates,
+        currency,
+      ),
+  );
+  const last3Totals = last3Data.map((m) => m.total);
   
   const lastMonthData = monthlyHistory.find(m => m.yearMonth === lastCompleteMonth);
   const lastMonthTotal = lastMonthData?.total || 0;
@@ -423,7 +436,8 @@ export function buildSpendingSummary(
     scheduledPayments
   };
   
-  const insights = computeInsights(summaryWithoutInsights, monthlyHistory);
+  const completeHistory = monthlyHistory.filter((m) => !m.isInProgress);
+  const insights = computeInsights(summaryWithoutInsights, completeHistory);
   
   return {
     ...summaryWithoutInsights,

@@ -10,6 +10,7 @@
  */
 
 import type { ExpenseTxnRecord } from "./extractTransactions";
+import { completeMonthsWithData } from "./cashFlowAverage";
 import { getParentCategory } from "./categoryTaxonomy";
 import { resolveDebtServicingKind } from "./debtServicing";
 
@@ -91,7 +92,7 @@ export function computeTypicalSpend(
   );
 
   const allMonths = Array.from(new Set(coreTxns.map((t) => t.txMonth))).sort();
-  const historicalMonths = allMonths.filter((m) => m < currentMonth);
+  const historicalMonths = completeMonthsWithData(allMonths, { currentMonth });
 
   if (historicalMonths.length === 0) {
     // Fall back to current month if no history

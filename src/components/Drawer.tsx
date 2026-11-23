@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { DrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
 import { formatMonthYear } from "@/lib/dateFormatting";
+import { IN_PROGRESS_LABEL } from "@/lib/monthAnchor";
 import { getSignColor, getSignBgColor } from "@/lib/colorHelpers";
 import type { TimeRange } from "@/lib/rangeUtils";
 import { formatMonthName, formatAccountLast4 } from "@/lib/rangeUtils";
@@ -274,7 +275,7 @@ function IncomeDrawerContent({ data, currency }: { data: import("@/lib/drawerTyp
                 <span className="w-20 text-right text-xs font-medium text-gray-900">
                   {hasData ? (
                     isCurrent ? (
-                      <span className="text-xs text-gray-500">in progress</span>
+                      <span className="text-xs text-gray-500">{IN_PROGRESS_LABEL}</span>
                     ) : (
                       fmt(month.regularIncome)
                     )

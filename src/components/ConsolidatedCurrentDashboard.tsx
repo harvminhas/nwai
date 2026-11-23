@@ -13,6 +13,7 @@ import type { AgentCard } from "@/lib/agentTypes";
 import { isBalanceMarker } from "@/lib/balanceMarkers";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
+import { getCurrentMonth } from "@/lib/monthAnchor";
 import {
   getEmergencyFundLiquidMetrics,
   monthlyHistoryCoreExpenses,
@@ -1125,7 +1126,8 @@ export default function ConsolidatedCurrentDashboard({
               expensesTotal: h.expensesTotal ?? 0,
               coreExpensesTotal: h.coreExpensesTotal,
               debtTotal: h.debtTotal ?? 0,
-              isEstimate: incomplete.includes(h.yearMonth),
+              isEstimate: incomplete.includes(h.yearMonth) && h.yearMonth !== getCurrentMonth(),
+              isInProgress: h.yearMonth === getCurrentMonth(),
             }))
           : []);
       } catch { setError("Failed to load dashboard"); }
