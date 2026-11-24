@@ -6,7 +6,11 @@ import { applyRulesAndRecalculate, merchantSlug, txnKey } from "@/lib/applyRules
 import { normaliseName } from "@/lib/sourceMappings";
 import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { inferCurrencyFromBankName } from "@/lib/currencyUtils";
-import { buildMerchantAliasResolver } from "@/lib/merchantAliases";
+import {
+  buildMerchantAliasResolver,
+  merchantDisplayNameForSlug,
+  merchantDisplayNamesFromRecords,
+} from "@/lib/merchantAliases";
 import type { ParsedStatementData, ExpenseTransaction } from "@/lib/types";
 import { statementAccountDisplayName } from "@/lib/accountListLabel";
 
@@ -75,12 +79,12 @@ export async function GET(request: NextRequest) {
       db.collection(`users/${uid}/txnCategoryOverrides`).get(),
       db.collection(`users/${uid}/merchantDisplayNames`).get(),
     ]);
-    // slug → user-set display name
-    const displayNameMap = new Map<string, string>();
-    for (const doc of displayNamesSnap.docs) {
-      const d = doc.data() as { displayName?: string };
-      if (d.displayName) displayNameMap.set(doc.id, d.displayName);
-    }
+    const displayNameMap = merchantDisplayNamesFromRecords(
+      displayNamesSnap.docs.map((doc) => ({
+        id: doc.id,
+        displayName: (doc.data() as { displayName?: string }).displayName,
+      })),
+    );
     const rulesMap = new Map<string, string>();
     for (const r of rulesSnap.docs) {
       const d = r.data();
@@ -305,7 +309,7 @@ export async function GET(request: NextRequest) {
       return {
         slug,
         name,
-        displayName: displayNameMap.get(slug),
+        displayName: merchantDisplayNameForSlug(slug, displayNameMap),
         category: dominantCategory,
         categories,
         currency: e.currency,

@@ -18,6 +18,7 @@ import {
 
 const page = readFileSync(resolve(__dirname, "../page.tsx"), "utf8");
 const layout = readFileSync(resolve(__dirname, "../dailySpendReadLayout.ts"), "utf8");
+const modal = readFileSync(resolve(__dirname, "../ThemeDetailModal.tsx"), "utf8");
 
 describe("daily spend page layout", () => {
   it("keeps the page from overflowing on a 390px phone", () => {
@@ -56,5 +57,14 @@ describe("daily spend page layout", () => {
 
   it("returns focus to the theme row when the modal closes", () => {
     expect(page).toContain("themeRowRefs.current[closedId]?.focus()");
+  });
+
+  it("splits Food merchants and keeps a mixed list for other themes", () => {
+    expect(modal).toContain("TOP_GROCERY_STORES_HEADING");
+    expect(modal).toContain("TOP_EAT_OUT_PLACES_HEADING");
+    expect(modal).toContain("TOP_MERCHANTS_HEADING");
+    expect(modal).toContain("split.groceryMerchants");
+    expect(modal).toContain("split.eatingOutMerchants");
+    expect(modal).toContain("{!split && (");
   });
 });

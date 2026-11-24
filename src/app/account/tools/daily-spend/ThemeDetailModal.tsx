@@ -15,6 +15,9 @@ import type {
 } from "@/lib/dailySpend";
 import {
   seeInSpendingLabel,
+  TOP_EAT_OUT_PLACES_HEADING,
+  TOP_GROCERY_STORES_HEADING,
+  TOP_MERCHANTS_HEADING,
   visitsPerMonthLabel,
   windowAverageLabel,
 } from "@/lib/dailySpend";
@@ -82,6 +85,39 @@ function ShareBar({
         />
       ))}
     </div>
+  );
+}
+
+function MerchantList({
+  heading,
+  merchants,
+  currency,
+}: {
+  heading: string;
+  merchants: DailySpendMerchantRow[];
+  currency: string;
+}) {
+  return (
+    <section className="mt-6 min-w-0">
+      <h3 className="text-sm font-semibold text-gray-900">{heading}</h3>
+      {merchants.length === 0 ? (
+        <p className="mt-2 text-sm text-gray-500">No merchants in this window.</p>
+      ) : (
+        <ul className="mt-1 divide-y divide-gray-100">
+          {merchants.map((merchant: DailySpendMerchantRow) => (
+            <li key={merchant.slug} className="flex min-w-0 items-start justify-between gap-3 py-2">
+              <p className="min-w-0 break-words text-sm text-gray-800">{merchant.name}</p>
+              <div className="shrink-0 text-right">
+                <p className="whitespace-nowrap text-sm font-medium tabular-nums text-gray-900">
+                  {moneyPerDay(merchant.dailyRate, currency)}
+                </p>
+                <p className="text-xs text-gray-500">{visitsPerMonthLabel(merchant.visitsPerMonth)}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -341,12 +377,22 @@ export function ThemeDetailModal({
                   ]}
                 />
               </div>
+              <MerchantList
+                heading={TOP_GROCERY_STORES_HEADING}
+                merchants={split.groceryMerchants}
+                currency={currency}
+              />
               <h4 className="mt-4 text-sm font-medium text-gray-900">Where eating out goes</h4>
               <div className="mt-1 min-w-0">
                 {split.eatingOutSubcategories.map((bar) => (
                   <RateBar key={bar.id} bar={bar} color="#fb923c" currency={currency} />
                 ))}
               </div>
+              <MerchantList
+                heading={TOP_EAT_OUT_PLACES_HEADING}
+                merchants={split.eatingOutMerchants}
+                currency={currency}
+              />
             </section>
           ) : (
             <section className="min-w-0">
@@ -363,26 +409,13 @@ export function ThemeDetailModal({
             </section>
           )}
 
-          <section className="mt-6 min-w-0">
-            <h3 className="text-sm font-semibold text-gray-900">Top 5 merchants</h3>
-            {detail.merchants.length === 0 ? (
-              <p className="mt-2 text-sm text-gray-500">No merchants in this window.</p>
-            ) : (
-              <ul className="mt-1 divide-y divide-gray-100">
-                {detail.merchants.map((merchant: DailySpendMerchantRow) => (
-                  <li key={merchant.slug} className="flex min-w-0 items-start justify-between gap-3 py-2">
-                    <p className="min-w-0 break-words text-sm text-gray-800">{merchant.name}</p>
-                    <div className="shrink-0 text-right">
-                      <p className="whitespace-nowrap text-sm font-medium tabular-nums text-gray-900">
-                        {moneyPerDay(merchant.dailyRate, currency)}
-                      </p>
-                      <p className="text-xs text-gray-500">{visitsPerMonthLabel(merchant.visitsPerMonth)}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          {!split && (
+            <MerchantList
+              heading={TOP_MERCHANTS_HEADING}
+              merchants={detail.merchants}
+              currency={currency}
+            />
+          )}
 
           <section className="mt-6 min-w-0">
             <h3 className="text-sm font-semibold text-gray-900">Last 6 months</h3>

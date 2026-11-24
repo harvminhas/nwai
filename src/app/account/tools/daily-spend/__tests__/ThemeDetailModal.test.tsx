@@ -24,7 +24,12 @@ vi.mock("next/link", () => ({
 }));
 import { ThemeDetailModal } from "../ThemeDetailModal";
 import type { DailySpendThemeRow } from "@/lib/dailySpend";
-import { seeInSpendingLabel } from "@/lib/dailySpend";
+import {
+  seeInSpendingLabel,
+  TOP_EAT_OUT_PLACES_HEADING,
+  TOP_GROCERY_STORES_HEADING,
+  TOP_MERCHANTS_HEADING,
+} from "@/lib/dailySpend";
 import { THEME_CHEVRON_CLASS, THEME_ROW_CLASS } from "../dailySpendReadLayout";
 
 const foodTheme: DailySpendThemeRow = {
@@ -47,10 +52,30 @@ const foodTheme: DailySpendThemeRow = {
       groceries: { id: "groceries", label: "Groceries", dailyRate: 8, share: 0.64 },
       eatingOut: { id: "eating-out", label: "Eating out", dailyRate: 4.5, share: 0.36 },
       eatingOutSubcategories: [
-        { id: "restaurants", label: "Restaurants", dailyRate: 2, share: 0.44 },
+        { id: "restaurants-dining", label: "Restaurants & dining", dailyRate: 2, share: 0.44 },
         { id: "coffee-drinks", label: "Coffee & Drinks", dailyRate: 1, share: 0.22 },
         { id: "fast-food", label: "Fast Food", dailyRate: 1, share: 0.22 },
         { id: "food-delivery", label: "Food Delivery", dailyRate: 0.5, share: 0.11 },
+      ],
+      groceryMerchants: [
+        {
+          slug: "loblaws",
+          name: "Loblaws",
+          dailyRate: 5,
+          total: 460,
+          count: 6,
+          visitsPerMonth: 2,
+        },
+      ],
+      eatingOutMerchants: [
+        {
+          slug: "tim-hortons",
+          name: "Tim Hortons",
+          dailyRate: 1.2,
+          total: 110,
+          count: 9,
+          visitsPerMonth: 3,
+        },
       ],
     },
     merchants: [
@@ -114,7 +139,12 @@ describe("theme detail modal open and close", () => {
     expect(dialog).toBeTruthy();
     expect(screen.getByText("Aug–Oct 2026 average")).toBeTruthy();
     expect(screen.getByText("Where eating out goes")).toBeTruthy();
-    expect(screen.getByText("Top 5 merchants")).toBeTruthy();
+    expect(screen.getByText("Restaurants & dining")).toBeTruthy();
+    expect(screen.getByText(TOP_GROCERY_STORES_HEADING)).toBeTruthy();
+    expect(screen.getByText(TOP_EAT_OUT_PLACES_HEADING)).toBeTruthy();
+    expect(screen.queryByText(TOP_MERCHANTS_HEADING)).toBeNull();
+    expect(screen.getByText("Loblaws")).toBeTruthy();
+    expect(screen.getByText("Tim Hortons")).toBeTruthy();
     expect(screen.getByText("2 visits/mo")).toBeTruthy();
     expect(screen.getByText("In progress")).toBeTruthy();
     expect(screen.getByRole("link", { name: seeInSpendingLabel("Food") }).getAttribute("href")).toBe(
@@ -132,5 +162,51 @@ describe("theme detail modal open and close", () => {
     fireEvent.click(row);
     fireEvent.click(screen.getByTestId("theme-detail-backdrop"));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+const shoppingTheme: DailySpendThemeRow = {
+  ...foodTheme,
+  id: "shopping",
+  label: "Shopping",
+  color: "#a855f7",
+  groceriesDaily: undefined,
+  eatingOutDaily: undefined,
+  detail: {
+    ...foodTheme.detail,
+    foodSplit: undefined,
+    subcategories: [
+      { id: "clothing", label: "Clothing", dailyRate: 4, share: 0.67 },
+      { id: "other-shopping", label: "Other Shopping", dailyRate: 2, share: 0.33 },
+    ],
+    merchants: [
+      {
+        slug: "amazon",
+        name: "Amazon",
+        dailyRate: 3,
+        total: 276,
+        count: 6,
+        visitsPerMonth: 2,
+      },
+    ],
+    spendingHref: "/account/spending?category=Shopping",
+  },
+};
+
+describe("non-food theme merchant list", () => {
+  it("keeps a single top-5 merchant list", () => {
+    render(
+      <ThemeDetailModal
+        theme={shoppingTheme}
+        currency="CAD"
+        windowLabel="Aug–Oct 2026"
+        onClose={() => undefined}
+      />,
+    );
+    expect(screen.getByText(TOP_MERCHANTS_HEADING)).toBeTruthy();
+    expect(screen.queryByText(TOP_GROCERY_STORES_HEADING)).toBeNull();
+    expect(screen.queryByText(TOP_EAT_OUT_PLACES_HEADING)).toBeNull();
+    expect(screen.getByText("Amazon")).toBeTruthy();
+    expect(screen.getByText("Other Shopping")).toBeTruthy();
   });
 });

@@ -25,6 +25,7 @@ import { spendingForMonth, type MonthlySpendingSummary } from "./spendingSummary
 import { spendingHrefForCategories } from "./spendingMultiCategory";
 import {
   buildMerchantAliasResolver,
+  merchantDisplayNamesFromRecords,
   resolveSpendingMerchant,
   type MerchantAliasResolver,
 } from "./merchantAliases";
@@ -51,6 +52,9 @@ export const DAYS_PER_MONTH = 30.4;
 export const DAYS_PER_YEAR = 365;
 export const THEME_SERIES_MONTHS = 6;
 export const TOP_MERCHANT_COUNT = 5;
+export const TOP_MERCHANTS_HEADING = "Top 5 merchants";
+export const TOP_GROCERY_STORES_HEADING = "Top grocery stores";
+export const TOP_EAT_OUT_PLACES_HEADING = "Top places you eat out";
 
 const STREAMING_EXCLUSIONS = new Set(["streaming", "streaming services"]);
 const CAR_INSURANCE_EXCLUSIONS = new Set(["car insurance"]);
@@ -123,6 +127,8 @@ export interface DailySpendThemeDetail {
     groceries: DailySpendBar;
     eatingOut: DailySpendBar;
     eatingOutSubcategories: DailySpendBar[];
+    groceryMerchants: DailySpendMerchantRow[];
+    eatingOutMerchants: DailySpendMerchantRow[];
   };
   merchants: DailySpendMerchantRow[];
   series: DailySpendSeriesPoint[];
@@ -187,6 +193,8 @@ export interface DailySpendInput {
   today?: Date;
   /** Confirmed users/{uid}/sourceMappings — same input Spending drilldown uses. */
   sourceMappings?: Array<{ canonical: string; alias: string; status?: string; type?: string }>;
+  /** users/{uid}/merchantDisplayNames — same saved renames Spending merchant detail uses. */
+  merchantDisplayNames?: Array<{ slug: string; displayName: string }>;
 }
 
 function nowDate(today?: Date): Date {
@@ -369,6 +377,87 @@ function residualParentForTheme(themeId: DailySpendThemeId): string | null {
   }
 }
 
+function themeLabel(themeId: DailySpendThemeId): string {
+  return DAILY_SPEND_THEMES.find((t) => t.id === themeId)?.label ?? themeId;
+}
+
+/**
+ * Parent-only leftover (txns tagged with the parent, no subtype) folds into
+ * this subtype when one is a generic catch-all. Dining's first leaf is
+ * Restaurants; other theme parents have no generic sibling.
+ */
+export function genericSubtypeForResidual(residualParent: string): string | null {
+  if (residualParent !== "Dining") return null;
+  return CATEGORY_TAXONOMY.Dining[0] ?? null;
+}
+
+/** Display label for a folded generic subtype, or "Other {theme}" leftover. */
+export function leftoverRowLabel(
+  themeId: DailySpendThemeId,
+  residualParent: string,
+  genericSubtype: string | null,
+): string {
+  if (genericSubtype) return `${genericSubtype} & ${residualParent.toLowerCase()}`;
+  return `Other ${themeLabel(themeId)}`;
+}
+
+/**
+ * Display-only: merge the parent residual bar into the generic subtype, or
+ * relabel it "Other {theme}". Does not change stored categories.
+ */
+function foldParentLeftoverIntoGeneric(
+  bars: DailySpendBar[],
+  residualLabel: string,
+  themeId: DailySpendThemeId,
+  shareOf: number,
+): DailySpendBar[] {
+  if (!residualLabel) return bars;
+  const generic = genericSubtypeForResidual(residualLabel);
+  const leftover = bars.find((b) => b.label === residualLabel);
+  const without = bars.filter((b) => b.label !== residualLabel);
+  const extra = leftover?.dailyRate ?? 0;
+
+  if (generic) {
+    const mergedLabel = leftoverRowLabel(themeId, residualLabel, generic);
+    const targetIdx = without.findIndex((b) => b.label === generic);
+    if (targetIdx >= 0) {
+      const target = without[targetIdx];
+      const dailyRate = target.dailyRate + extra;
+      const merged: DailySpendBar = {
+        id: barId(mergedLabel),
+        label: mergedLabel,
+        dailyRate,
+        share: shareOf > 0 ? dailyRate / shareOf : 0,
+      };
+      return [...without.slice(0, targetIdx), merged, ...without.slice(targetIdx + 1)];
+    }
+    if (extra > 0) {
+      return [
+        {
+          id: barId(mergedLabel),
+          label: mergedLabel,
+          dailyRate: extra,
+          share: shareOf > 0 ? extra / shareOf : 0,
+        },
+        ...without,
+      ];
+    }
+    return without;
+  }
+
+  if (!leftover || leftover.dailyRate <= 0) return without;
+  const otherLabel = leftoverRowLabel(themeId, residualLabel, null);
+  return [
+    ...without,
+    {
+      id: barId(otherLabel),
+      label: otherLabel,
+      dailyRate: leftover.dailyRate,
+      share: shareOf > 0 ? leftover.dailyRate / shareOf : 0,
+    },
+  ];
+}
+
 export function themeAmountsFromCategories(
   categories: Array<{ category: string; amount: number }>,
 ): ThemeMonthAmounts {
@@ -546,20 +635,29 @@ function barsFromLabels(
   return bars;
 }
 
-function merchantsForTheme(
-  themeId: DailySpendThemeId,
+function topMerchants(
   expenseTxns: ExpenseTxnRecord[],
   windowMonths: string[],
   calendarDays: number,
   aliasResolver: MerchantAliasResolver | null,
+  displayNames: ReadonlyMap<string, string> | null,
+  matches: (txn: ExpenseTxnRecord) => boolean,
 ): DailySpendMerchantRow[] {
   const monthSet = new Set(windowMonths);
-  const map = new Map<string, { name: string; total: number; count: number }>();
+  const map = new Map<string, { name: string; renamed: boolean; total: number; count: number }>();
   for (const txn of expenseTxns) {
     if (!monthSet.has(txn.txMonth)) continue;
-    if (themeIdForCategory(txn.category) !== themeId) continue;
-    const { slug, name } = resolveSpendingMerchant(txn.merchant, aliasResolver);
-    const cur = map.get(slug) ?? { name, total: 0, count: 0 };
+    if (!matches(txn)) continue;
+    const { slug, name } = resolveSpendingMerchant(txn.merchant, aliasResolver, displayNames);
+    // Several statement slugs can share one canonical row (amazon-ca, amazon-com → amazon).
+    // A rename saved on any of them wins, whatever order the transactions arrive in.
+    const renamed =
+      displayNames != null && name !== resolveSpendingMerchant(txn.merchant, aliasResolver).name;
+    const cur = map.get(slug) ?? { name, renamed, total: 0, count: 0 };
+    if (renamed && !cur.renamed) {
+      cur.name = name;
+      cur.renamed = true;
+    }
     cur.total += Math.abs(txn.amount);
     cur.count += 1;
     map.set(slug, cur);
@@ -576,6 +674,42 @@ function merchantsForTheme(
     }))
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
     .slice(0, TOP_MERCHANT_COUNT);
+}
+
+function merchantsForTheme(
+  themeId: DailySpendThemeId,
+  expenseTxns: ExpenseTxnRecord[],
+  windowMonths: string[],
+  calendarDays: number,
+  aliasResolver: MerchantAliasResolver | null,
+  displayNames: ReadonlyMap<string, string> | null,
+): DailySpendMerchantRow[] {
+  return topMerchants(
+    expenseTxns,
+    windowMonths,
+    calendarDays,
+    aliasResolver,
+    displayNames,
+    (txn) => themeIdForCategory(txn.category) === themeId,
+  );
+}
+
+function merchantsForFoodSplit(
+  split: FoodSplit,
+  expenseTxns: ExpenseTxnRecord[],
+  windowMonths: string[],
+  calendarDays: number,
+  aliasResolver: MerchantAliasResolver | null,
+  displayNames: ReadonlyMap<string, string> | null,
+): DailySpendMerchantRow[] {
+  return topMerchants(
+    expenseTxns,
+    windowMonths,
+    calendarDays,
+    aliasResolver,
+    displayNames,
+    (txn) => foodSplitForCategory(txn.category) === split,
+  );
 }
 
 function seriesForTheme(
@@ -614,18 +748,24 @@ function buildThemeDetail(
   currentYm: string,
   daysElapsed: number,
   aliasResolver: MerchantAliasResolver | null,
+  displayNames: ReadonlyMap<string, string> | null,
   firstDataMonth: string | null,
 ): DailySpendThemeDetail {
   const residual = residualParentForTheme(themeId);
   const labels = [...taxonomyLabelsForTheme(themeId)];
   if (residual && !labels.includes(residual)) labels.push(residual);
 
-  const subcategories = barsFromLabels(
-    labels,
-    windowAmounts,
-    windowMonths,
+  const subcategories = foldParentLeftoverIntoGeneric(
+    barsFromLabels(
+      labels,
+      windowAmounts,
+      windowMonths,
+      dailyRate,
+      { keepZero: false },
+    ),
+    residual ?? "",
+    themeId,
     dailyRate,
-    { keepZero: false },
   );
 
   let foodSplit: DailySpendThemeDetail["foodSplit"];
@@ -647,13 +787,34 @@ function buildThemeDetail(
         dailyRate: eatingOut,
         share: dailyRate > 0 ? eatingOut / dailyRate : 0,
       },
-      eatingOutSubcategories: barsFromLabels(
-        eatingOutLabels,
-        windowAmounts,
-        windowMonths,
+      eatingOutSubcategories: foldParentLeftoverIntoGeneric(
+        barsFromLabels(
+          eatingOutLabels,
+          windowAmounts,
+          windowMonths,
+          eatingOut,
+          { keepZero: true },
+        ),
+        residual ?? "Dining",
+        themeId,
         eatingOut,
-        { keepZero: true },
-      ).filter((bar) => bar.id !== barId("Dining") || bar.dailyRate > 0),
+      ),
+      groceryMerchants: merchantsForFoodSplit(
+        "groceries",
+        expenseTxns,
+        windowMonths,
+        calendarDays,
+        aliasResolver,
+        displayNames,
+      ),
+      eatingOutMerchants: merchantsForFoodSplit(
+        "eating-out",
+        expenseTxns,
+        windowMonths,
+        calendarDays,
+        aliasResolver,
+        displayNames,
+      ),
     };
   }
 
@@ -666,6 +827,7 @@ function buildThemeDetail(
       windowMonths,
       calendarDays,
       aliasResolver,
+      displayNames,
     ),
     series: seriesForTheme(themeId, amountsFor, currentYm, daysElapsed, firstDataMonth),
     spendingHref: spendingHrefForTheme(themeId),
@@ -682,6 +844,12 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
   const aliasResolver =
     input.sourceMappings && input.sourceMappings.length > 0
       ? buildMerchantAliasResolver(input.sourceMappings)
+      : null;
+  const displayNames =
+    input.merchantDisplayNames && input.merchantDisplayNames.length > 0
+      ? merchantDisplayNamesFromRecords(
+          input.merchantDisplayNames.map((d) => ({ id: d.slug, displayName: d.displayName })),
+        )
       : null;
 
   const allMonths = availableYearMonths(input.expenseTxns);
@@ -783,6 +951,7 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
         currentYm,
         daysElapsed,
         aliasResolver,
+        displayNames,
         allMonths[0] ?? null,
       ),
     };

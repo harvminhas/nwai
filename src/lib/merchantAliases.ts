@@ -81,20 +81,52 @@ export function buildMerchantAliasResolver(
 }
 
 /**
+ * User-set display names from `users/{uid}/merchantDisplayNames/{slug}`.
+ * Same map Spending merchants and the merchant detail page use.
+ */
+export function merchantDisplayNamesFromRecords(
+  records: Iterable<{ id: string; displayName?: string | null }>,
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const rec of records) {
+    const name = rec.displayName?.trim();
+    if (name) map.set(rec.id, name);
+  }
+  return map;
+}
+
+/**
+ * Saved rename for a merchant slug, or undefined to keep the statement name.
+ * Lookup is the same Map.get(slug) the Spending merchants API uses.
+ */
+export function merchantDisplayNameForSlug(
+  slug: string,
+  displayNames?: ReadonlyMap<string, string> | null,
+  alsoSlug?: string,
+): string | undefined {
+  if (!displayNames || displayNames.size === 0) return undefined;
+  return displayNames.get(slug) ?? (alsoSlug ? displayNames.get(alsoSlug) : undefined);
+}
+
+/**
  * Canonical merchant key + display name used by the Spending page.
  *
  * Matches drilldown grouping: user-confirmed source mappings first, then
  * built-in aliases (`amazon-ca` → Amazon) via {@link resolveCanonicalMerchantSlug}
- * and {@link resolveMerchantAlias}.
+ * and {@link resolveMerchantAlias}. When `displayNames` is provided, a saved
+ * merchant rename (merchant detail page) replaces the statement name.
  */
 export function resolveSpendingMerchant(
   merchantName: string,
   aliasResolver?: Pick<MerchantAliasResolver, "resolve"> | null,
+  displayNames?: ReadonlyMap<string, string> | null,
 ): { slug: string; name: string } {
   const resolved = aliasResolver?.resolve(merchantName) ?? merchantName;
   const slug = merchantSlug(resolved);
+  const canonicalSlug = resolveCanonicalMerchantSlug(slug);
+  const statementName = resolveMerchantAlias(slug, resolved);
   return {
-    slug: resolveCanonicalMerchantSlug(slug),
-    name: resolveMerchantAlias(slug, resolved),
+    slug: canonicalSlug,
+    name: merchantDisplayNameForSlug(canonicalSlug, displayNames, slug) ?? statementName,
   };
 }
