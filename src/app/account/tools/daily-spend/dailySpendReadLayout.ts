@@ -15,6 +15,10 @@ export const THEME_ROW_CLASS =
 export const THEME_NAME_CLASS = "min-w-0 break-words text-sm font-medium text-gray-900";
 export const THEME_AMOUNT_CLASS = "shrink-0 whitespace-nowrap text-right tabular-nums";
 export const THEME_CHEVRON_CLASS = "mt-1.5 h-4 w-4 shrink-0 text-gray-300";
+export const PACE_PANEL_CLASS =
+  "rounded-xl border border-dashed border-amber-300 bg-amber-50 px-4 py-3 text-amber-950";
+export const TRACKER_ACTION_CLASS =
+  "w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50";
 
 /** Desktop: centred ~560px dialog. Mobile: 90% bottom sheet, no horizontal overflow. */
 export const MODAL_BACKDROP_CLASS = "fixed inset-0 bg-black/50";
