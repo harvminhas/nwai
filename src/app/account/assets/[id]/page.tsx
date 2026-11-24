@@ -681,7 +681,9 @@ export default function ManualAssetPage() {
     });
     if (result.ok) {
       setToast({
-        msg: applyToMerchant
+        msg: result.error
+          ? result.error
+          : applyToMerchant
           ? `Rule saved: "${tx.merchant}" → ${newCategory}`
           : `This transaction → ${newCategory}`,
         ok: true,

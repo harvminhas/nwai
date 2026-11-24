@@ -1043,7 +1043,9 @@ export default function AccountDetailPage() {
     });
     if (result.ok) {
       showToast(
-        applyToMerchant
+        result.error
+          ? result.error
+          : applyToMerchant
           ? `Rule saved: "${txn.merchant}" → ${newCategory}`
           : `This transaction → ${newCategory}`,
         true,

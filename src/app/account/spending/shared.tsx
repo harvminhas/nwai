@@ -176,6 +176,12 @@ export function CategoryPicker({
       setLinkAmount("");
       return;
     }
+    if (isAssetPurchaseCategory(current) && !forceMerchantRule) {
+      // Moving off an Asset purchase tag: overwrite this transaction's override.
+      // A merchant rule would be shadowed by that override and nothing would change.
+      onSelect(cat, { applyToMerchant: false });
+      return;
+    }
     onSelect(cat);
   }
 

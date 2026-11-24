@@ -33,8 +33,6 @@ function expense(
   return {
     date: `${MONTH}-15`,
     merchant: overrides.merchant ?? "Test merchant",
-    amount: overrides.amount,
-    category: overrides.category,
     accountSlug: "td-chequing",
     accountLabel: "TD Chequing",
     txMonth: MONTH,

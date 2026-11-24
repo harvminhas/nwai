@@ -7,7 +7,7 @@
  */
 
 import { sendTextRequest } from "./ai";
-import { PARSER_CATEGORY_VALUES, buildCategoryPromptLines } from "./categoryTaxonomy";
+import { PARSER_CATEGORY_VALUES } from "./categoryTaxonomy";
 import { isUploadedDocumentType, type UploadedDocumentType } from "./types";
 
 export interface ParsedRow {
@@ -60,7 +60,27 @@ Rules for transactions:
 - For income transactions (isExpense=false), set category to "Income"
 
 Use the most specific category or subtype. Parent categories and their subtypes:
-${buildCategoryPromptLines()}
+- "Housing"               -- rent, utilities, internet/phone, home insurance, condo fees
+     subtypes: "Rent" | "Utilities" | "Internet & Phone" | "Home Insurance" | "Condo Fees"
+- "Dining"                -- restaurants, food delivery, coffee shops, fast food
+     subtypes: "Restaurants" | "Coffee & Drinks" | "Fast Food" | "Food Delivery"
+- "Groceries"             -- grocery stores, supermarkets, bulk food (Costco, No Frills, Loblaws). No subtypes.
+- "Shopping"              -- retail, clothing, electronics, home goods, online shopping
+     subtypes: "Clothing" | "Electronics" | "Home & Garden" | "Online Shopping"
+- "Transportation"        -- gas stations, transit, parking, rideshare, auto service
+     subtypes: "Gas" | "Parking" | "Car Insurance" | "Transit" | "Rideshare" | "Auto Service"
+- "Entertainment"         -- streaming, movies, events, sports, hobbies
+     subtypes: "Streaming" | "Movies & Events" | "Sports" | "Hobbies"
+- "Subscriptions"         -- recurring monthly/annual charges
+     subtypes: "Software" | "Memberships" | "News & Media"
+- "Healthcare"            -- medical, pharmacy, dental, vision, fitness, health insurance
+     subtypes: "Pharmacy" | "Dental" | "Vision" | "Fitness" | "Health Insurance"
+- "Fees"                  -- bank fees, NSF/OD fees, annual card fees, service charges
+     subtypes: "Bank Fees" | "NSF/OD Fees" | "Annual Card Fee"
+- "Debt" -- subtype REQUIRED on outbound payments: "Installment Servicing" | "Card Servicing". Installment = mortgage/auto/student/personal loan debit from this account. Card Servicing = credit card or LOC payment settling revolving balances.
+- "Investments & Savings" -- RRSP/TFSA, investment transfers, mutual funds, GICs, life insurance. No subtypes.
+- "Transfers"             -- inter-account transfers, e-transfers to individuals. No subtypes.
+- "Other"                 -- anything else. No subtypes.
 Use a subtype (e.g. "Gas") when confident. Fall back to the parent (e.g. "Transportation") when unsure.
 
 Rules for balance (per transaction):
