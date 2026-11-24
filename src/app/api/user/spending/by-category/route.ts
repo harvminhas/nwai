@@ -5,6 +5,7 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { monthsForCashFlowAverage } from "@/lib/cashFlowAverage";
 import { getCurrentMonth } from "@/lib/monthAnchor";
 import { aggregateSpendingByCategory } from "@/lib/spendingAggregation";
+import { loadMerchantRenameContext } from "@/app/api/user/merchantRenameContext";
 
 /**
  * GET /api/user/spending/by-category
@@ -31,7 +32,10 @@ export async function GET(request: NextRequest) {
     const window = searchParams.get("window") ?? "12mo";
 
     // Get financial profile (cached)
-    const profile = await getFinancialProfile(uid, db);
+    const [profile, renameCtx] = await Promise.all([
+      getFinancialProfile(uid, db),
+      loadMerchantRenameContext(uid, db),
+    ]);
 
     const currentYm = getCurrentMonth();
     const availableMonths = [...new Set(profile.expenseTxns.map((t) => t.txMonth))].sort();
@@ -53,7 +57,8 @@ export async function GET(request: NextRequest) {
       filteredTxns,
       profile.accountSnapshots,
       profile.debtPaymentHistory,
-      actualMonths
+      actualMonths,
+      renameCtx,
     );
 
     return NextResponse.json({

@@ -22,6 +22,7 @@ import { accountGroup } from "@/lib/assetsSummary";
 import { formatLastTransactionDate } from "@/lib/formatLastTransactionDate";
 import { MerchantDrawer, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
 import { merchantSlug } from "@/lib/applyRules";
+import { matchingMerchantName } from "@/lib/merchantAliases";
 import { monthAbbrev, resolveDebtHeaderActivity } from "@/lib/debtHeaderActivity";
 import { commitAccountMonth } from "@/lib/accountMonthPayload";
 import { isMonthInProgress } from "@/lib/monthAnchor";
@@ -474,7 +475,7 @@ function FlowSections({
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onMerchantClick(txn.merchant);
+                                onMerchantClick(matchingMerchantName(txn));
                               }}
                               className="text-left text-gray-900 font-medium truncate hover:text-purple-600 transition"
                             >
@@ -1024,7 +1025,7 @@ export default function AccountDetailPage() {
       const res = await fetch("/api/user/category-rules", {
         method: "PUT",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant: txn.merchant, category: newCategory }),
+        body: JSON.stringify({ merchant: matchingMerchantName(txn), category: newCategory }),
       });
       if (res.ok) {
         showToast(`Rule saved: "${txn.merchant}" → ${newCategory}`, true);
@@ -2259,7 +2260,7 @@ export default function AccountDetailPage() {
                   <div key={i} className="flex items-center gap-3 px-4 py-3">
                     <div className="flex-1 min-w-0">
                       <button
-                        onClick={() => handleOpenMerchantDrawer(txn.merchant)}
+                        onClick={() => handleOpenMerchantDrawer(matchingMerchantName(txn))}
                         className="truncate text-sm font-medium text-gray-900 hover:text-purple-600 transition text-left"
                       >
                         {txn.merchant}

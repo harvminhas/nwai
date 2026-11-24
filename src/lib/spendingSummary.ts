@@ -8,8 +8,10 @@
 import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from "./extractTransactions";
 import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
-import { merchantSlug } from "./applyRules";
-import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUtils";
+import {
+  resolveSpendingMerchant,
+  type MerchantRenameContext,
+} from "./merchantAliases";
 import { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
 import { getCurrentMonth, getLastCompleteMonth, isMonthInProgress, listMonthsWithData } from "./monthAnchor";
 import { computeMonthlyBuckets } from "./monthlyBucketComputation";
@@ -19,6 +21,8 @@ import { displayNameFromProfileAccount } from "./accountListLabel";
 export interface SpendingTransaction {
   date: string;
   merchant: string;
+  /** Statement descriptor when `merchant` is a saved rename. */
+  rawMerchant?: string;
   merchantSlug: string;
   category: string;
   amount: number;
@@ -203,7 +207,8 @@ export function buildSpendingSummary(
   userReviews: DebtPaymentReview[],
   fxRates: Record<string, number>,
   currency: string = "CAD",
-  rangeMonths?: string[]
+  rangeMonths?: string[],
+  renameCtx?: MerchantRenameContext | null,
 ): SpendingSummary {
   const currentMonth = getCurrentMonth();
   const lastCompleteMonth = getLastCompleteMonth();
@@ -285,9 +290,13 @@ export function buildSpendingSummary(
       );
       
       categoryTxns.forEach(t => {
-        const slug = merchantSlug(t.merchant);
-        const canonicalSlug = resolveCanonicalMerchantSlug(slug); // Use canonical slug for grouping
-        const canonicalName = resolveMerchantAlias(slug, t.merchant);
+        const resolved = resolveSpendingMerchant(
+          t.merchant,
+          renameCtx?.aliasResolver,
+          renameCtx?.displayNames,
+        );
+        const canonicalSlug = resolved.slug;
+        const canonicalName = resolved.name;
         
         if (!merchantMap.has(canonicalSlug)) {
           merchantMap.set(canonicalSlug, {
@@ -310,6 +319,7 @@ export function buildSpendingSummary(
         m.transactions.push({
           date: t.date,
           merchant: canonicalName,
+          rawMerchant: t.merchant,
           merchantSlug: canonicalSlug,
           category: t.category,
           amount: Math.abs(t.amount),

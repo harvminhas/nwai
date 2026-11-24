@@ -173,6 +173,11 @@ export interface DebtPaymentReview {
 
 export interface ExpenseTransaction {
   merchant: string;
+  /**
+   * Statement descriptor before a saved merchant rename.
+   * Present on API display payloads; omitted in parser output / fingerprints.
+   */
+  rawMerchant?: string;
   amount: number;
   category: string;
   date?: string; // ISO date YYYY-MM-DD

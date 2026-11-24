@@ -29,6 +29,7 @@ import type { ToolParams } from "@/lib/chat/executor";
 import { buildChatContext } from "@/lib/chat/context";
 import { cleanAIAnswer } from "@/lib/chat/answerPostProcessor";
 import { checkAIUsageLimit, incrementAIUsage, getLimitReachedMessage } from "@/lib/aiUsageLimit";
+import { loadMerchantRenameContext } from "@/app/api/user/merchantRenameContext";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -98,7 +99,10 @@ export async function POST(req: NextRequest) {
 
   // ── 5. Load financial profile (uses cache — no per-request rebuild) ────────
   console.log(`[chat] POST uid=${targetUid} message="${message.slice(0, 60)}"`);
-  const profile = await getFinancialProfile(targetUid, db);
+  const [profile, renameCtx] = await Promise.all([
+    getFinancialProfile(targetUid, db),
+    loadMerchantRenameContext(targetUid, db),
+  ]);
   console.log(`[chat] profile loaded — expTxns=${profile.expenseTxns.length} months=${profile.allTxMonths.length} stale=${profile.cacheStale ?? false}`);
 
   // ── 5b. Load user review context (classifications for income/spending/savings) ─
@@ -151,7 +155,7 @@ export async function POST(req: NextRequest) {
     console.log(`[chat] round=${round + 1} tools=${functionCalls.map((f) => `${f.name}(${JSON.stringify(f.args)})`).join(", ")}`);
     const functionResponseParts: Part[] = await Promise.all(
       functionCalls.map(async (fc) => {
-        const toolResult = executeTool(fc.name, fc.args as ToolParams, profile, reviewContext);
+        const toolResult = executeTool(fc.name, fc.args as ToolParams, profile, reviewContext, renameCtx);
         const rows = toolResult.data?.rows;
         console.log(`[chat] tool=${fc.name} rows=${Array.isArray(rows) ? rows.length : "n/a"}`);
         if (Array.isArray(rows)) {

@@ -12,6 +12,7 @@ import type { ParsedStatementData } from "@/lib/types";
 import type { AgentCard } from "@/lib/agentTypes";
 import { isBalanceMarker } from "@/lib/balanceMarkers";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { matchingMerchantName } from "@/lib/merchantAliases";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 import { getCurrentMonth } from "@/lib/monthAnchor";
 import {
@@ -1240,7 +1241,7 @@ export default function ConsolidatedCurrentDashboard({
   // Current-month discretionary expenses — core only (isCoreExcluded)
   const allExpenseTxns = data?.expenses?.transactions ?? [];
   const calendarMonthTxns = allExpenseTxns.filter(
-    (t) => (!t.date || t.date.startsWith(yearMonth)) && !isBalanceMarker(t.merchant ?? "")
+    (t) => (!t.date || t.date.startsWith(yearMonth)) && !isBalanceMarker(matchingMerchantName(t))
   );
   const expenses = calendarMonthTxns.length > 0
     ? calendarMonthTxns
@@ -1248,7 +1249,8 @@ export default function ConsolidatedCurrentDashboard({
           (t) =>
             !isCoreExcluded(t.category ?? "", {
               debtType: (t as { debtType?: string }).debtType,
-              merchant: t.merchant,
+              // Statement descriptor, not the saved rename — classification must not change on rename.
+              merchant: matchingMerchantName(t),
             }),
         )
         .reduce((s, t) => s + t.amount, 0)

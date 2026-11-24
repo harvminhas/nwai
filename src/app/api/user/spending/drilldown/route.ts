@@ -14,11 +14,15 @@ import { getCurrentMonth, isMonthInProgress, listMonthsWithData } from "@/lib/mo
 import { buildSpendingSummary } from "@/lib/spendingSummary";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { merchantSlug } from "@/lib/applyRules";
-import { resolveMerchantAlias, resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
+import { resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
 import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import { classifyDebtAccount } from "@/lib/debtPaymentKinds";
-import { buildMerchantAliasResolver } from "@/lib/merchantAliases";
+import {
+  displayedMerchantName,
+  merchantRenameContextFromRecords,
+  resolveSpendingMerchant,
+} from "@/lib/merchantAliases";
 import type { DebtPaymentReview } from "@/lib/types";
 import { displayNameFromProfileAccount } from "@/lib/accountListLabel";
 
@@ -299,10 +303,11 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Load user debt payment reviews and source mappings
-    const [reviewsSnap, mappingsSnap] = await Promise.all([
+    // Load user debt payment reviews, source mappings, and saved merchant names
+    const [reviewsSnap, mappingsSnap, displayNamesSnap] = await Promise.all([
       db.collection(`users/${access.targetUid}/debtPaymentReviews`).get(),
       db.collection(`users/${access.targetUid}/sourceMappings`).get(),
+      db.collection(`users/${access.targetUid}/merchantDisplayNames`).get(),
     ]);
     
     const userReviews: DebtPaymentReview[] = reviewsSnap.docs.map((doc) => ({
@@ -314,9 +319,15 @@ export async function GET(req: NextRequest) {
       reviewedAt: doc.get("reviewedAt"),
     }));
 
-    // Build merchant alias resolver from source mappings
     const mappings = mappingsSnap.docs.map(doc => doc.data() as { canonical: string; alias: string; status?: string; type?: string });
-    const aliasResolver = buildMerchantAliasResolver(mappings);
+    const renameCtx = merchantRenameContextFromRecords(
+      mappings,
+      displayNamesSnap.docs.map((doc) => ({
+        id: doc.id,
+        displayName: (doc.data() as { displayName?: string }).displayName,
+      })),
+    );
+    const aliasResolver = renameCtx.aliasResolver;
 
     // Build spending summary using shared function (handles currency conversion, debt payments, etc.)
     const summary = buildSpendingSummary(
@@ -327,6 +338,7 @@ export async function GET(req: NextRequest) {
       profile.fxRates || {},
       profile.homeCurrency,
       completeMonths,
+      renameCtx,
     );
 
     // Build lookup map for monthlyHistory (arrays may not align with windowMonths)
@@ -619,12 +631,11 @@ export async function GET(req: NextRequest) {
 
       // Group by canonical merchant slug (after resolving aliases)
       for (const txn of scopedTxns) {
-        // 1. Resolve alias to canonical name first (merging)
-        const resolvedMerchant = aliasResolver.resolve(txn.merchant);
-        // 2. Then apply slug and canonical resolution (aliasing)
-        const slug = merchantSlug(resolvedMerchant);
-        const canonicalSlug = resolveCanonicalMerchantSlug(slug);
-        const canonicalName = resolveMerchantAlias(slug, resolvedMerchant);
+        const { slug: canonicalSlug, name: canonicalName } = resolveSpendingMerchant(
+          txn.merchant,
+          aliasResolver,
+          renameCtx.displayNames,
+        );
 
         if (!merchantMap.has(canonicalSlug)) {
           merchantMap.set(canonicalSlug, {
@@ -641,7 +652,7 @@ export async function GET(req: NextRequest) {
         merchData.total += absAmount;
         merchData.transactions.push({
           date: txn.date,
-          merchant: canonicalName,
+          merchant: displayedMerchantName(txn.merchant, aliasResolver, renameCtx.displayNames),
           category: txn.category,
           amount: absAmount,
           accountLabel: displayNameFromProfileAccount(txn.accountSlug, profile, txn.accountLabel),
@@ -826,9 +837,12 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Merchant not found in this category" }, { status: 404 });
       }
 
-      // Use resolved merchant name (after alias resolution) for display
-      const resolvedFirstMerchant = aliasResolver.resolve(scopedTxns[0].merchant);
-      const merchantName = resolveMerchantAlias(merchantSlug(resolvedFirstMerchant), resolvedFirstMerchant);
+      // Use resolved merchant name (after alias resolution + saved rename) for display
+      const merchantName = resolveSpendingMerchant(
+        scopedTxns[0].merchant,
+        aliasResolver,
+        renameCtx.displayNames,
+      ).name;
 
       // Build merchant monthly series (scoped to this parent category)
       const merchantMonthlySeries: MonthlySeries[] = windowMonths.map(ym => {
@@ -931,6 +945,7 @@ export async function GET(req: NextRequest) {
         total: number;
         categories: Map<string, number>;
         txCount: number;
+        rawNames: Set<string>;
       }>();
 
       // Filter to window months, exclude core-excluded categories
@@ -944,21 +959,21 @@ export async function GET(req: NextRequest) {
       scopedTxns.forEach(t => {
         const parent = getParentCategory(t.category);
         // Group ALL transactions by merchant (including debt payments)
-        // 1. Resolve alias to canonical name first (merging)
-        const resolvedMerchant = aliasResolver.resolve(t.merchant);
-        // 2. Then apply slug and canonical resolution (aliasing)
-        const slug = merchantSlug(resolvedMerchant);
-        const canonical = resolveCanonicalMerchantSlug(slug);
+        const { slug: canonical, name } = resolveSpendingMerchant(
+          t.merchant,
+          aliasResolver,
+          renameCtx.displayNames,
+        );
         if (!canonical) return;
 
         if (!merchantMap.has(canonical)) {
-          // Use same display name resolution as category branch
           merchantMap.set(canonical, {
-            name: resolveMerchantAlias(slug, resolvedMerchant),
+            name,
             canonicalSlug: canonical,
             total: 0,
             categories: new Map(),
             txCount: 0,
+            rawNames: new Set(),
           });
         }
 
@@ -967,13 +982,18 @@ export async function GET(req: NextRequest) {
         entry.total += amount;
         entry.txCount += 1;
         entry.categories.set(parent, (entry.categories.get(parent) ?? 0) + amount);
+        entry.rawNames.add(t.merchant);
       });
 
-      // Filter merchants by query (case-insensitive substring match on display name or canonical slug)
+      // Filter merchants by query (display name, raw statement name, or slug)
       const matchedMerchants = Array.from(merchantMap.values()).filter(m => {
         const displayNameLower = m.name.toLowerCase();
         const canonicalLower = m.canonicalSlug.toLowerCase();
-        return displayNameLower.includes(query) || canonicalLower.includes(query);
+        if (displayNameLower.includes(query) || canonicalLower.includes(query)) return true;
+        for (const raw of m.rawNames) {
+          if (raw.toLowerCase().includes(query)) return true;
+        }
+        return false;
       });
 
       const rankedItems: RankedItem[] = matchedMerchants

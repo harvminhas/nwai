@@ -11,7 +11,10 @@
 import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
 import type { AccountSnapshot, ExpenseTxnRecord, DebtPaymentHistoryEntry } from "./extractTransactions";
-import { merchantSlug } from "./applyRules";
+import {
+  displayedMerchantName,
+  type MerchantRenameContext,
+} from "./merchantAliases";
 
 export interface CategorySpendingSummary {
   category: string;
@@ -39,7 +42,8 @@ export function aggregateSpendingByCategory(
   expenseTxns: ExpenseTxnRecord[],
   accountSnapshots: AccountSnapshot[],
   debtPaymentHistory: DebtPaymentHistoryEntry[],
-  months: number
+  months: number,
+  renameCtx?: MerchantRenameContext | null,
 ): CategorySpendingSummary[] {
   const monthCount = Math.max(1, months);
   
@@ -105,7 +109,11 @@ export function aggregateSpendingByCategory(
       // Top merchants in this category
       const merchantMap = new Map<string, number>();
       for (const txn of txns) {
-        const name = txn.merchant || "Unknown";
+        const name = displayedMerchantName(
+          txn.merchant || "Unknown",
+          renameCtx?.aliasResolver,
+          renameCtx?.displayNames,
+        );
         merchantMap.set(name, (merchantMap.get(name) ?? 0) + Math.abs(txn.amount));
       }
       

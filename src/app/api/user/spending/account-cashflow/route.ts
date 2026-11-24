@@ -12,6 +12,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
+import { displayedMerchantName } from "@/lib/merchantAliases";
+import { loadMerchantRenameContext } from "@/app/api/user/merchantRenameContext";
 
 export interface DayStat {
   day: number;           // 1–31
@@ -38,7 +40,10 @@ export async function GET(request: NextRequest) {
     const accountSlug = url.searchParams.get("account")?.trim();
     if (!accountSlug) return NextResponse.json({ error: "account required" }, { status: 400 });
 
-    const profile = await getFinancialProfile(uid, db);
+    const [profile, renameCtx] = await Promise.all([
+      getFinancialProfile(uid, db),
+      loadMerchantRenameContext(uid, db),
+    ]);
     const { expenseTxns, incomeTxns, homeCurrency } = profile;
 
     // Find the account's currency from snapshots
@@ -83,7 +88,11 @@ export async function GET(request: NextRequest) {
       const day = parseInt(t.date.slice(8, 10), 10);
       if (day < 1 || day > 31) continue;
       expByDay.set(day, (expByDay.get(day) ?? 0) + Math.abs(t.amount));
-      const name = t.merchant ?? "Other";
+      const name = displayedMerchantName(
+        t.merchant ?? "Other",
+        renameCtx.aliasResolver,
+        renameCtx.displayNames,
+      );
       if (!merchantsByDay.has(day)) merchantsByDay.set(day, new Map());
       const mm = merchantsByDay.get(day)!;
       mm.set(name, (mm.get(name) ?? 0) + Math.abs(t.amount));

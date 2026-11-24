@@ -10,6 +10,7 @@ import {
   CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
 import { merchantSlug } from "@/lib/applyRules";
+import { matchingMerchantName } from "@/lib/merchantAliases";
 import {
   categoryColor, CategoryPicker, RecurringIcon,
   type CashFrequency,
@@ -64,6 +65,7 @@ const FREQ_OPTIONS: { value: CashFrequency; label: string }[] = [
 
 interface ExpenseTxn {
   merchant: string;
+  rawMerchant?: string;
   amount: number;
   category: string;
   accountLabel?: string;
@@ -385,16 +387,16 @@ export default function SpendingCategoryPage() {
     setAllMonthsData((prev) => {
       const next = new Map<string, ExpenseTxn[]>();
       for (const [ym, txns] of prev) {
-        next.set(ym, txns.map((t) => t.merchant === txn.merchant ? { ...t, category: newCategory } : t));
+        next.set(ym, txns.map((t) => matchingMerchantName(t) === matchingMerchantName(txn) ? { ...t, category: newCategory } : t));
       }
       return next;
     });
-    setTransactions((prev) => prev.map((t) => t.merchant === txn.merchant ? { ...t, category: newCategory } : t));
+    setTransactions((prev) => prev.map((t) => matchingMerchantName(t) === matchingMerchantName(txn) ? { ...t, category: newCategory } : t));
     try {
       const res = await fetch("/api/user/category-rules", {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant: txn.merchant, category: newCategory }),
+        body: JSON.stringify({ merchant: matchingMerchantName(txn), category: newCategory }),
       });
       if (res.ok) { setToast(`Rule saved: "${txn.merchant}" → ${newCategory}`); requestProfileRefresh(); }
       else setToast("Failed to save rule");
@@ -403,7 +405,7 @@ export default function SpendingCategoryPage() {
 
   function handleRecurringToggle(txn: ExpenseTxn, anchorEl: HTMLElement) {
     if (!token) return;
-    const slug = merchantSlug(txn.merchant);
+    const slug = merchantSlug(matchingMerchantName(txn));
     if (recurringRules.has(slug)) {
       setRecurringRules((prev) => { const next = new Map(prev); next.delete(slug); return next; });
       fetch(`/api/user/recurring-rules?slug=${encodeURIComponent(slug)}`, {
@@ -419,10 +421,10 @@ export default function SpendingCategoryPage() {
   async function confirmRecurring() {
     if (!token || !pendingRecurring) return;
     const { txn } = pendingRecurring;
-    const slug = merchantSlug(txn.merchant);
+    const slug = merchantSlug(matchingMerchantName(txn));
     setRecurringRules((prev) => {
       const next = new Map(prev);
-      next.set(slug, { name: txn.merchant, amount: txn.amount, frequency: pendingFreq });
+      next.set(slug, { name: matchingMerchantName(txn), amount: txn.amount, frequency: pendingFreq });
       return next;
     });
     setPendingRecurring(null);
@@ -430,7 +432,7 @@ export default function SpendingCategoryPage() {
       await fetch("/api/user/recurring-rules", {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant: txn.merchant, amount: txn.amount, frequency: pendingFreq, category: txn.category }),
+        body: JSON.stringify({ merchant: matchingMerchantName(txn), amount: txn.amount, frequency: pendingFreq, category: txn.category }),
       });
       setToast(`"${txn.merchant}" marked as recurring (${pendingFreq})`);
     } catch { setToast("Failed to save"); }
@@ -534,8 +536,11 @@ export default function SpendingCategoryPage() {
       )
     : 0;
   const merchantTotals = new Map<string, number>();
+  // Display name → statement descriptor, so the drawer opens the real merchant slug after a rename.
+  const rawForDisplayed = new Map<string, string>();
   for (const t of transactions) {
     merchantTotals.set(t.merchant, (merchantTotals.get(t.merchant) ?? 0) + t.amount);
+    if (!rawForDisplayed.has(t.merchant)) rawForDisplayed.set(t.merchant, matchingMerchantName(t));
   }
   const topMerchants = Array.from(merchantTotals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const color = categoryColor(rawName);
@@ -543,7 +548,7 @@ export default function SpendingCategoryPage() {
   // ── shared transaction row renderer ──────────────────────────────────────────
 
   function renderTxnRow(txn: ExpenseTxn, pickerKey: string) {
-    const slug       = merchantSlug(txn.merchant);
+    const slug       = merchantSlug(matchingMerchantName(txn));
     const isManualSub = recurringRules.has(slug);
     const txnColor   = categoryColor(txn.category?.toLowerCase() ?? "other");
     return (
@@ -553,7 +558,7 @@ export default function SpendingCategoryPage() {
             <span className="block truncate text-sm font-medium text-gray-800">{txn.merchant}</span>
           ) : (
             <button
-              onClick={() => openDrawer(merchantSlug(txn.merchant))}
+              onClick={() => openDrawer(merchantSlug(matchingMerchantName(txn)))}
               className="block truncate text-left text-sm font-medium text-gray-800 hover:text-purple-600 hover:underline w-full"
             >
               {txn.merchant}
@@ -733,8 +738,10 @@ export default function SpendingCategoryPage() {
               : [];
 
             const merchantMap = new Map<string, number>();
+            const stRawForDisplayed = new Map<string, string>();
             for (const t of visibleTxns) {
               merchantMap.set(t.merchant, (merchantMap.get(t.merchant) ?? 0) + t.amount);
+              if (!stRawForDisplayed.has(t.merchant)) stRawForDisplayed.set(t.merchant, matchingMerchantName(t));
             }
             const stTopMerchants = Array.from(merchantMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
             const visibleTotal   = visibleTxns.reduce((s, t) => s + t.amount, 0);
@@ -865,7 +872,7 @@ export default function SpendingCategoryPage() {
                               <div key={merchant}>
                                 <div className="flex items-center justify-between text-sm mb-0.5">
                                   <button
-                                    onClick={() => openDrawer(merchantSlug(merchant))}
+                                    onClick={() => openDrawer(merchantSlug(stRawForDisplayed.get(merchant) ?? merchant))}
                                     className="font-medium text-gray-700 truncate text-left hover:text-purple-600 hover:underline transition-colors"
                                   >
                                     {merchant}
@@ -1043,7 +1050,7 @@ export default function SpendingCategoryPage() {
                   <div key={merchant}>
                     <div className="flex items-center justify-between text-sm mb-1">
                       <button
-                        onClick={() => openDrawer(merchantSlug(merchant))}
+                        onClick={() => openDrawer(merchantSlug(rawForDisplayed.get(merchant) ?? merchant))}
                         className="font-medium text-gray-700 truncate text-left hover:text-purple-600 hover:underline transition-colors"
                       >
                         {merchant}

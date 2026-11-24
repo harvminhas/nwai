@@ -83,14 +83,27 @@ export function buildMerchantAliasResolver(
 /**
  * User-set display names from `users/{uid}/merchantDisplayNames/{slug}`.
  * Same map Spending merchants and the merchant detail page use.
+ *
+ * Also indexes each saved slug under its built-in canonical slug
+ * (`amazon-ca` → `amazon`) so a rename on one spelling variant applies
+ * to the rest of the group. An explicit record for the canonical slug wins.
  */
 export function merchantDisplayNamesFromRecords(
   records: Iterable<{ id: string; displayName?: string | null }>,
 ): Map<string, string> {
   const map = new Map<string, string>();
+  const extras: Array<[string, string]> = [];
   for (const rec of records) {
     const name = rec.displayName?.trim();
-    if (name) map.set(rec.id, name);
+    if (!name) continue;
+    map.set(rec.id, name);
+    extras.push([rec.id, name]);
+  }
+  for (const [slug, name] of extras) {
+    const canonical = resolveCanonicalMerchantSlug(slug);
+    if (canonical !== slug && !map.has(canonical)) {
+      map.set(canonical, name);
+    }
   }
   return map;
 }
@@ -106,6 +119,26 @@ export function merchantDisplayNameForSlug(
 ): string | undefined {
   if (!displayNames || displayNames.size === 0) return undefined;
   return displayNames.get(slug) ?? (alsoSlug ? displayNames.get(alsoSlug) : undefined);
+}
+
+export type MerchantRenameContext = {
+  aliasResolver: MerchantAliasResolver;
+  displayNames: ReadonlyMap<string, string>;
+};
+
+/**
+ * Build a rename context from already-fetched Firestore records.
+ * Source-mapping merges + merchantDisplayNames — the one resolver all
+ * transaction/merchant display paths should use.
+ */
+export function merchantRenameContextFromRecords(
+  mappings: Array<{ canonical: string; alias: string; status?: string; type?: string }>,
+  displayNameRecords: Iterable<{ id: string; displayName?: string | null }>,
+): MerchantRenameContext {
+  return {
+    aliasResolver: buildMerchantAliasResolver(mappings),
+    displayNames: merchantDisplayNamesFromRecords(displayNameRecords),
+  };
 }
 
 /**
@@ -124,9 +157,64 @@ export function resolveSpendingMerchant(
   const resolved = aliasResolver?.resolve(merchantName) ?? merchantName;
   const slug = merchantSlug(resolved);
   const canonicalSlug = resolveCanonicalMerchantSlug(slug);
+  const rawSlug = merchantSlug(merchantName);
   const statementName = resolveMerchantAlias(slug, resolved);
+  const renamed =
+    merchantDisplayNameForSlug(canonicalSlug, displayNames, slug) ??
+    merchantDisplayNameForSlug(rawSlug, displayNames);
   return {
     slug: canonicalSlug,
-    name: merchantDisplayNameForSlug(canonicalSlug, displayNames, slug) ?? statementName,
+    name: renamed ?? statementName,
   };
+}
+
+/**
+ * Display-only overlay for a transaction descriptor.
+ * Returns the saved rename when one exists for this merchant (or any
+ * spelling variant / source-mapping alias of the same canonical slug).
+ * Unrenamed merchants keep the raw statement string — no title-casing.
+ */
+export function displayedMerchantName(
+  rawName: string,
+  aliasResolver?: Pick<MerchantAliasResolver, "resolve"> | null,
+  displayNames?: ReadonlyMap<string, string> | null,
+): string {
+  if (!rawName) return rawName;
+  const resolved = aliasResolver?.resolve(rawName) ?? rawName;
+  const slug = merchantSlug(resolved);
+  const canonicalSlug = resolveCanonicalMerchantSlug(slug);
+  const rawSlug = merchantSlug(rawName);
+  return (
+    merchantDisplayNameForSlug(canonicalSlug, displayNames, slug) ??
+    merchantDisplayNameForSlug(rawSlug, displayNames) ??
+    rawName
+  );
+}
+
+/**
+ * Overlay a saved rename onto a transaction-shaped object.
+ * `merchant` becomes the display name; `rawMerchant` keeps the statement
+ * descriptor for matching, rules, fingerprints, and the rename editor.
+ */
+export function overlayDisplayedMerchant<T extends { merchant?: string }>(
+  txn: T,
+  ctx?: MerchantRenameContext | null,
+): T & { merchant: string; rawMerchant: string } {
+  const rawMerchant = txn.merchant ?? "";
+  return {
+    ...txn,
+    merchant: displayedMerchantName(rawMerchant, ctx?.aliasResolver, ctx?.displayNames),
+    rawMerchant,
+  };
+}
+
+/** Statement descriptor for matching / rules / slugs. Prefer rawMerchant when present. */
+export function matchingMerchantName(txn: {
+  merchant?: string;
+  rawMerchant?: string;
+  rawName?: string;
+}): string {
+  const raw = txn.rawMerchant ?? txn.rawName;
+  if (typeof raw === "string" && raw.length > 0) return raw;
+  return txn.merchant ?? "";
 }
