@@ -144,6 +144,9 @@ describe("theme mapping", () => {
       "Transfers & Payments",
       "Investments & Savings",
       "CA: RRSP",
+      "Asset purchase",
+      "Vehicle",
+      "Home & property",
       "Interest",
       "Other",
     ];

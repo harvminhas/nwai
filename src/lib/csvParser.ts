@@ -7,7 +7,7 @@
  */
 
 import { sendTextRequest } from "./ai";
-import { ALL_CATEGORY_VALUES } from "./categoryTaxonomy";
+import { PARSER_CATEGORY_VALUES } from "./categoryTaxonomy";
 import { isUploadedDocumentType, type UploadedDocumentType } from "./types";
 
 export interface ParsedRow {
@@ -92,6 +92,14 @@ Rules for closingBalance:
 - If no balance column exists, set closingBalance to null
 - Always return closingBalance as a positive number (absolute value of the balance shown)`;
 
+/** Categories the CSV parser may assign. Excludes user-only tags such as Asset purchase. */
+export const CSV_PARSER_CATEGORIES = new Set([
+  ...PARSER_CATEGORY_VALUES,
+  "Transfers & Payments", // legacy
+  "Transfer Out",
+  "Income",
+]);
+
 export async function parseCSV(csvText: string, accountType?: string): Promise<CsvParseResult> {
   // Truncate to keep token usage reasonable. Keep the first couple of lines
   // (banks that emit a header/preamble put it at the top) plus the LAST rows,
@@ -132,13 +140,9 @@ export async function parseCSV(csvText: string, accountType?: string): Promise<C
     };
   }
 
-  // Build valid category set from taxonomy (parents + subtypes) + legacy values
-  const VALID_CATEGORIES = new Set([
-    ...ALL_CATEGORY_VALUES,
-    "Transfers & Payments", // legacy
-    "Transfer Out",
-    "Income",
-  ]);
+  // Parser feed excludes user-only tags (Asset purchase). If the model returns
+  // one, it falls through to Other / Income below.
+  const VALID_CATEGORIES = CSV_PARSER_CATEGORIES;
 
   type AiRow = { date?: string; description?: string; amount?: number; isExpense?: boolean; category?: string; balance?: number | null };
   type AiResponse = { documentType?: string; transactions?: AiRow[]; closingBalance?: number | null };

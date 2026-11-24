@@ -14,7 +14,7 @@
 
 import { getParentCategory, type ParentCategory } from "./categoryTaxonomy";
 
-export type MoneyCoachBucket = "fixed" | "essentials" | "flexible" | "savings" | "uncategorized";
+export type MoneyCoachBucket = "fixed" | "essentials" | "flexible" | "savings" | "assets" | "uncategorized";
 
 export interface BucketMetadata {
   id: MoneyCoachBucket;
@@ -51,8 +51,11 @@ const PARENT_TO_BUCKET: Record<string, MoneyCoachBucket> = {
   "Cash & ATM": "flexible",
   "Personal Care": "flexible",     // Spa, Salon & Haircare, Massage, Skincare & Beauty, Barber, Nail Care
   
-  // Savings & Debt (investments, savings, debt paydown beyond minimums)
+  // Savings (RRSP, TFSA, stocks, crypto — not spending)
   "Investments & Savings": "savings",  // RRSP, TFSA, RESP, 401k, IRA, Stocks, Mutual Funds, GICs, Crypto, Emergency Fund
+
+  // Asset purchase (vehicle, home, business — not spending; own group)
+  "Asset purchase": "assets",
   
   // Excluded from buckets (internal transfers, fees, interest, other)
   // "Transfers", "Transfer Out", "Transfers & Payments" → not counted in spending (filtered by isCoreExcluded)
@@ -92,6 +95,13 @@ export const BUCKET_METADATA: Record<MoneyCoachBucket, BucketMetadata> = {
     description: "Savings contributions, debt paydown beyond minimums",
     emoji: "💰",
     targetPct: 20, // Savings and debt paydown
+  },
+  assets: {
+    id: "assets",
+    label: "Asset purchases",
+    description: "Vehicle, home, business, and other asset purchases — not spending",
+    emoji: "🏠",
+    targetPct: 0,
   },
   uncategorized: {
     id: "uncategorized",

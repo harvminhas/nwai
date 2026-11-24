@@ -8,7 +8,14 @@ import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency, formatCurrencyWithCents } from "@/lib/currencyUtils";
 import AccountSwitcher from "@/components/AccountSwitcher";
 import { ConfirmModal } from "@/components/ConfirmModal";
-import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
+import {
+  CategoryPicker,
+  categoryColor,
+  persistCategoryChange,
+  defaultApplyToMerchant,
+  type CategorySelectMeta,
+} from "@/app/account/spending/shared";
+import { matchingMerchantName } from "@/lib/merchantAliases";
 import { triggerProfileRefetch } from "@/lib/profileRefetch";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import type { ManualAsset, AssetCategory, HubLink, ExpenseTransaction, IncomeTransaction } from "@/lib/types";
@@ -643,32 +650,47 @@ export default function ManualAssetPage() {
     });
   };
 
-  const handleCategoryChange = async (txFingerprint: string, merchant: string, newCategory: string) => {
+  const handleCategoryChange = async (
+    tx: LinkedTxn,
+    newCategory: string,
+    meta?: CategorySelectMeta,
+  ) => {
     if (!token) return;
     setOpenCategoryPicker(null);
+    const applyToMerchant = meta?.applyToMerchant ?? defaultApplyToMerchant(newCategory);
     
     // Optimistic update - just category, no role changes
     setLinkedTxns((prev) =>
-      prev.map((tx) =>
-        tx.fingerprint === txFingerprint ? { ...tx, category: newCategory } : tx
+      prev.map((row) =>
+        row.fingerprint === tx.fingerprint ? { ...row, category: newCategory } : row
       )
     );
     
-    try {
-      const res = await fetch("/api/user/category-rules", {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant, category: newCategory }),
+    const result = await persistCategoryChange({
+      token,
+      category: newCategory,
+      merchant: matchingMerchantName(tx),
+      applyToMerchant,
+      amount: tx.amount,
+      date: tx.date,
+      stmtId: tx.stmtId,
+      accountSlug: tx.accountSlug,
+      fingerprint: tx.fingerprint,
+      linkAssetId: meta?.linkAssetId,
+      linkAmount: meta?.linkAmount,
+    });
+    if (result.ok) {
+      setToast({
+        msg: result.error
+          ? result.error
+          : applyToMerchant
+          ? `Rule saved: "${tx.merchant}" → ${newCategory}`
+          : `This transaction → ${newCategory}`,
+        ok: true,
       });
-      
-      if (res.ok) {
-        setToast({ msg: `Rule saved: "${merchant}" → ${newCategory}`, ok: true });
-        requestProfileRefresh();
-      } else {
-        setToast({ msg: "Failed to save rule", ok: false });
-      }
-    } catch {
-      setToast({ msg: "Failed to save rule", ok: false });
+      requestProfileRefresh();
+    } else {
+      setToast({ msg: result.error ?? "Failed to save rule", ok: false });
     }
   };
 
@@ -987,7 +1009,8 @@ export default function ManualAssetPage() {
                                       <CategoryPicker
                                         anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
                                         current={tx.category ?? "Other"}
-                                        onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
+                                        authToken={token}
+                                        onSelect={(cat, meta) => handleCategoryChange(tx, cat, meta)}
                                         onClose={() => setOpenCategoryPicker(null)}
                                       />
                                     )}
@@ -1194,7 +1217,8 @@ export default function ManualAssetPage() {
                                       <CategoryPicker
                                         anchorRef={{ current: categoryPickerBtnRefs.get(tx.fingerprint)! }}
                                         current={tx.category ?? "Other"}
-                                        onSelect={(cat) => handleCategoryChange(tx.fingerprint, tx.merchant, cat)}
+                                        authToken={token}
+                                        onSelect={(cat, meta) => handleCategoryChange(tx, cat, meta)}
                                         onClose={() => setOpenCategoryPicker(null)}
                                       />
                                     )}
@@ -1303,7 +1327,7 @@ export default function ManualAssetPage() {
 
         {fundingTxns.length > 0 && (
           <div className="mt-6">
-            <p className="text-xs font-medium text-gray-500 mb-2">Funding</p>
+            <p className="text-xs font-medium text-gray-500 mb-2">Purchase & funding</p>
             <div className="space-y-2">
               {fundingTxns.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "")).map((tx) => (
                 <div key={tx.fingerprint} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">

@@ -109,6 +109,7 @@ export function computeMoneyCoachBreakdown(
     essentials: avg.buckets.essentials,
     flexible: avg.buckets.flexible,
     savings: avg.leftover,
+    assets: 0,
     uncategorized: 0,
   };
 
@@ -126,7 +127,7 @@ export function computeMoneyCoachBreakdown(
   const bucketSummaries: MoneyCoachBucketSummary[] = (
     Object.keys(bucketAverages) as MoneyCoachBucket[]
   )
-    .filter((bucket) => bucket !== "uncategorized")
+    .filter((bucket) => bucket !== "uncategorized" && bucket !== "assets")
     .map((bucket) => {
       const metadata = BUCKET_METADATA[bucket];
       const monthlyAverage = bucketAverages[bucket];

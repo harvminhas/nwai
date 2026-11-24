@@ -23,6 +23,7 @@ import type { SourceMapping } from "@/lib/sourceMappings";
 import { occurrencesInMonth, datesInMonth } from "@/lib/cashIncome";
 import type { CashIncomeEntry } from "@/lib/cashIncome";
 import { resolveTxnCurrencyFromSnapshots, getHomeCurrency } from "@/lib/currencyUtils";
+import { txFingerprint } from "@/lib/txFingerprint";
 import { findAccountHistoryLabel, resolveAccountDisplayName, statementAccountDisplayName } from "@/lib/accountListLabel";
 import {
   merchantRenameContextFromRecords,
@@ -743,6 +744,8 @@ export async function GET(request: NextRequest) {
             amount: t.amount,
             category: t.category,
             accountLabel: t.accountLabel,
+            accountSlug: t.accountSlug,
+            fingerprint: txFingerprint(t.accountSlug, t.date, t.amount, t.merchant),
             currency: resolveTxnCurrencyFromSnapshots(
               t.accountSlug,
               snapshots,

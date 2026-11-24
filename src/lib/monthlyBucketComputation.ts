@@ -13,7 +13,7 @@ import type { ExpenseTxnRecord, AccountSnapshot } from "./extractTransactions";
 import type { DebtPaymentHistoryEntry } from "./extractTransactions";
 import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
-import { isCoreExcluded } from "./spendingMetrics";
+import { isNotSpending, isNonSpendingGroup } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
 import { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
 import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
@@ -42,8 +42,36 @@ export interface MonthlyBucketResult {
   items: MonthlyBucketItem[];
   /** Total spending (sum of fixed + essentials + flexible) */
   total: number;
-  /** Non-spending items (savings, uncategorized) — excluded from total */
+  /** Non-spending items (savings, assets, uncategorized) — excluded from total */
   excludedItems: MonthlyBucketItem[];
+  /**
+   * Money moved into assets this month (Asset purchases + Investments & Savings).
+   * Not spending; not leftover. Same figure cash flow uses for "Into assets".
+   */
+  intoAssets: number;
+  /** Rolled-up Asset purchases / Investments & Savings lines for display. */
+  intoAssetsLines: Array<{ category: string; amount: number }>;
+}
+
+const ASSET_MOVE_DISPLAY: Record<string, string> = {
+  "Asset purchase": "Asset purchases",
+  "Investments & Savings": "Investments & Savings",
+};
+
+/** Roll excluded asset-move items up to parent display lines. */
+export function intoAssetsLinesFromItems(
+  items: Array<{ category: string; amount: number }>,
+): Array<{ category: string; amount: number }> {
+  const byLabel = new Map<string, number>();
+  for (const item of items) {
+    const parent = getParentCategory(item.category);
+    const label = ASSET_MOVE_DISPLAY[parent];
+    if (!label) continue;
+    byLabel.set(label, (byLabel.get(label) ?? 0) + item.amount);
+  }
+  return Array.from(byLabel.entries())
+    .map(([category, amount]) => ({ category, amount }))
+    .sort((a, b) => b.amount - a.amount);
 }
 
 /**
@@ -81,6 +109,7 @@ export function computeMonthlyBuckets(
     essentials: 0,
     flexible: 0,
     savings: 0,
+    assets: 0,
     uncategorized: 0,
   };
   
@@ -105,8 +134,10 @@ export function computeMonthlyBuckets(
   const categoryMap = new Map<string, MonthlyBucketItem>();
   
   for (const txn of monthTxns) {
-    // Skip transfers and other excluded categories
-    if (isCoreExcluded(txn.category)) continue;
+    const excludeOpts = { debtType: txn.debtType, merchant: txn.merchant };
+    // Skip transfers / interest / card servicing. Asset moves still flow into
+    // excludedItems so Spending and cash flow can show "Into assets".
+    if (isNotSpending(txn.category, excludeOpts) && !isNonSpendingGroup(txn.category)) continue;
     
     // Skip Debt parent category - handled by scheduled payments above
     const parentCategory = getParentCategory(txn.category);
@@ -149,6 +180,8 @@ export function computeMonthlyBuckets(
   excludedItems.sort((a, b) => b.amount - a.amount);
   
   const total = buckets.fixed + buckets.essentials + buckets.flexible;
+  const intoAssets = buckets.assets + buckets.savings;
+  const intoAssetsLines = intoAssetsLinesFromItems(excludedItems);
   
   return {
     yearMonth,
@@ -156,6 +189,8 @@ export function computeMonthlyBuckets(
     items,
     total,
     excludedItems,
+    intoAssets,
+    intoAssetsLines,
   };
 }
 
@@ -187,6 +222,7 @@ export function computeAverageBuckets(
       essentials: mean(monthlyResults.map((r) => r.buckets.essentials)),
       flexible: mean(monthlyResults.map((r) => r.buckets.flexible)),
       savings: 0,
+      assets: mean(monthlyResults.map((r) => r.buckets.assets)),
       uncategorized: mean(monthlyResults.map((r) => r.buckets.uncategorized)),
     },
     monthlyResults,

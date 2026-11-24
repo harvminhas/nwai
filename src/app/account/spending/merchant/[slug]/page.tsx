@@ -9,7 +9,12 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, Cell,
 } from "recharts";
-import { categoryColor, CategoryPicker } from "@/app/account/spending/shared";
+import {
+  categoryColor,
+  CategoryPicker,
+  persistCategoryChange,
+  type CategorySelectMeta,
+} from "@/app/account/spending/shared";
 import { txnKey } from "@/lib/applyRules";
 import { matchingMerchantName } from "@/lib/merchantAliases";
 import type { MerchantSummary } from "@/app/api/user/spending/merchants/route";
@@ -214,9 +219,13 @@ export default function MerchantDetailPage() {
     key: string,
     newCategory: string,
     txn: import("@/lib/types").ExpenseTransaction & { ym: string },
+    meta?: CategorySelectMeta,
   ) => {
     setTxnPickerKey(null);
     if (!idToken || !txn.stmtId) return;
+    // Per-txn chips on this page have always been this-transaction only.
+    // Asset purchase can opt into a merchant rule from the follow-up step.
+    const applyToMerchant = meta?.applyToMerchant ?? false;
     setSavingTxnKey(key);
     setMerchant((m) => m ? {
       ...m,
@@ -228,20 +237,20 @@ export default function MerchantDetailPage() {
           : t,
       ),
     } : m);
-    try {
-      await fetch("/api/user/txn-category", {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          stmtId: txn.stmtId,
-          date: txn.date,
-          amount: txn.amount,
-          merchant: matchingMerchantName(txn),
-          category: newCategory,
-        }),
-      });
-      requestProfileRefresh();
-    } catch {
+    const result = await persistCategoryChange({
+      token: idToken,
+      category: newCategory,
+      merchant: matchingMerchantName(txn),
+      applyToMerchant,
+      amount: txn.amount,
+      date: txn.date,
+      stmtId: txn.stmtId,
+      accountSlug: txn.accountSlug,
+      linkAssetId: meta?.linkAssetId,
+      linkAmount: meta?.linkAmount,
+    });
+    if (result.ok) requestProfileRefresh();
+    else {
       setMerchant((m) => m ? {
         ...m,
         transactions: m.transactions.map((t) =>
@@ -252,9 +261,8 @@ export default function MerchantDetailPage() {
             : t,
         ),
       } : m);
-    } finally {
-      setSavingTxnKey(null);
     }
+    setSavingTxnKey(null);
   }, [idToken, requestProfileRefresh]);
 
   if (loading) {
@@ -1078,7 +1086,8 @@ export default function MerchantDetailPage() {
                         <CategoryPicker
                           anchorRef={{ current: txnPickerBtnRefs.current.get(key)! }}
                           current={txn.category}
-                          onSelect={(cat) => void handleTxnCategorySelect(key, cat, txn)}
+                          authToken={idToken}
+                          onSelect={(cat, meta) => void handleTxnCategorySelect(key, cat, txn, meta)}
                           onClose={() => setTxnPickerKey(null)}
                         />
                       )}

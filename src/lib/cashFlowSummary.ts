@@ -32,7 +32,7 @@ export type {
 } from "./monthlyCashFlow";
 
 export const CASH_FLOW_TRANSFER_NOTE =
-  "Transfers between your own accounts, credit card payments, and investments are left out, so this is what actually came in and went out — the same numbers as Income and Spending.";
+  "Transfers between your own accounts, credit card payments, investments, and asset purchases are left out, so this is what actually came in and went out — the same numbers as Income and Spending.";
 
 const TOP_CATEGORY_COUNT = 6;
 const TOP_SOURCE_COUNT = 8;

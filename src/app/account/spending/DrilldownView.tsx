@@ -93,6 +93,7 @@ interface DrilldownData {
   /** Multi-category view (?category=Groceries,Dining): one section per category. */
   categories?: string[];
   sections?: Array<{ category: string; total: number; avgPerMonth: number }>;
+  movedIntoAssets?: { total: number; lines: Array<{ category: string; amount: number }> };
 }
 
 function formatMonthLabel(yearMonth: string, short = true): string {
@@ -1171,6 +1172,30 @@ export function DrilldownView({ token }: DrilldownViewProps) {
             {displayData.level === "all" && (
               <div className="mt-4 p-3 bg-neutral-50 rounded-lg text-sm text-neutral-600">
                 The Debt row is loan payments only — mortgage, car, home equity line. Card payments sit inside it as information, because those purchases already appear in the category rows above. One-off payments are listed inside Debt too and never add to the total.
+              </div>
+            )}
+            {displayData.level === "all" && displayData.movedIntoAssets && displayData.movedIntoAssets.total > 0.005 && (
+              <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/60 p-3">
+                <p className="text-sm font-semibold text-indigo-950">Moved into assets — not spending</p>
+                <p className="mt-0.5 text-xs text-indigo-800/80">
+                  These moved money into investments or things you own. They are not in the spending total above.
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {displayData.movedIntoAssets.lines.map((line) => (
+                    <li key={line.category} className="flex items-start justify-between gap-3 text-sm text-indigo-950">
+                      <span className="min-w-0 break-words">{line.category}</span>
+                      <span className="shrink-0 tabular-nums font-medium">
+                        {formatCurrencyWithCents(line.amount, displayData.currency, displayData.currency)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 flex items-start justify-between gap-3 text-sm font-semibold text-indigo-950">
+                  <span>Into assets</span>
+                  <span className="shrink-0 tabular-nums">
+                    {formatCurrencyWithCents(displayData.movedIntoAssets.total, displayData.currency, displayData.currency)}
+                  </span>
+                </p>
               </div>
             )}
           </div>

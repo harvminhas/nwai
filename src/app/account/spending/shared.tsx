@@ -15,6 +15,8 @@ import {
   PICKER_CATEGORIES,
   getParentCategory,
   isSubtype,
+  isAssetPurchaseCategory,
+  defaultApplyToMerchant,
   PARENTS_WITH_SUBTYPES,
 } from "@/lib/categoryTaxonomy";
 
@@ -46,18 +48,47 @@ export function RecurringIcon({ active }: { active: boolean }) {
 
 // ── CategoryPicker (portal, fixed-position, two-level accordion) ──────────────
 
+export type CategorySelectMeta = {
+  applyToMerchant: boolean;
+  linkAssetId?: string;
+  linkAmount?: number;
+};
+
+export type CategoryPickerAsset = { id: string; label: string };
+
 interface CategoryPickerProps {
   anchorRef: React.RefObject<HTMLButtonElement | null>;
   current: string;
-  onSelect: (cat: string) => void;
+  onSelect: (cat: string, meta?: CategorySelectMeta) => void;
   onClose: () => void;
   /** `undefined` = default banner; `null` = no banner; string = custom. */
   headerHint?: string | null;
+  /** Bearer token — used to load assets when tagging an Asset purchase. */
+  authToken?: string | null;
+  assets?: CategoryPickerAsset[];
+  /** Merchant-level chips have no single txn — hide “only this transaction”. */
+  forceMerchantRule?: boolean;
 }
 
-export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHint }: CategoryPickerProps) {
+export { isAssetPurchaseCategory, defaultApplyToMerchant };
+
+export function CategoryPicker({
+  anchorRef,
+  current,
+  onSelect,
+  onClose,
+  headerHint,
+  authToken,
+  assets: assetsProp,
+  forceMerchantRule = false,
+}: CategoryPickerProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden" });
+  const [pendingAssetCat, setPendingAssetCat] = useState<string | null>(null);
+  const [applyToMerchant, setApplyToMerchant] = useState(false);
+  const [linkAssetId, setLinkAssetId] = useState<string>("");
+  const [linkAmount, setLinkAmount] = useState("");
+  const [loadedAssets, setLoadedAssets] = useState<CategoryPickerAsset[] | null>(null);
 
   // All parents collapsed by default; only pre-expand the current selection's parent
   const currentParent = getParentCategory(current).toLowerCase();
@@ -117,10 +148,151 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHi
   };
 
   const bannerText = headerHint === undefined ? "Change category · saves as rule" : headerHint;
+  const assets = assetsProp ?? loadedAssets ?? [];
+
+  useEffect(() => {
+    if (!pendingAssetCat || assetsProp || !authToken) return;
+    let cancelled = false;
+    fetch("/api/user/assets", { headers: { Authorization: `Bearer ${authToken}` } })
+      .then((r) => r.json())
+      .then((j) => {
+        if (cancelled) return;
+        const list = Array.isArray(j.assets)
+          ? (j.assets as Array<{ id: string; label: string }>).map((a) => ({ id: a.id, label: a.label }))
+          : [];
+        setLoadedAssets(list);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadedAssets([]);
+      });
+    return () => { cancelled = true; };
+  }, [pendingAssetCat, assetsProp, authToken]);
+
+  function pickCategory(cat: string) {
+    if (isAssetPurchaseCategory(cat)) {
+      setPendingAssetCat(cat);
+      setApplyToMerchant(forceMerchantRule);
+      setLinkAssetId("");
+      setLinkAmount("");
+      return;
+    }
+    if (isAssetPurchaseCategory(current) && !forceMerchantRule) {
+      // Moving off an Asset purchase tag: overwrite this transaction's override.
+      // A merchant rule would be shadowed by that override and nothing would change.
+      onSelect(cat, { applyToMerchant: false });
+      return;
+    }
+    onSelect(cat);
+  }
+
+  function confirmAssetPurchase() {
+    if (!pendingAssetCat) return;
+    const amount = parseFloat(linkAmount);
+    onSelect(pendingAssetCat, {
+      applyToMerchant,
+      ...(linkAssetId
+        ? {
+            linkAssetId,
+            ...(Number.isFinite(amount) && amount > 0 ? { linkAmount: amount } : {}),
+          }
+        : {}),
+    });
+  }
 
   return createPortal(
-    <div ref={menuRef} style={style}
+    <div ref={menuRef} style={{ ...style, width: pendingAssetCat ? 260 : (style.width ?? 224) }}
       className="rounded-xl border border-gray-200 bg-white shadow-xl ring-1 ring-black/5 flex flex-col overflow-hidden">
+      {pendingAssetCat ? (
+        <div className="flex flex-col overflow-hidden">
+          <div className="shrink-0 border-b border-gray-100 px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setPendingAssetCat(null)}
+              className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
+            >
+              ← Categories
+            </button>
+            <p className="mt-1 text-sm font-semibold text-gray-900">{pendingAssetCat}</p>
+            <p className="text-[11px] text-gray-500">Not spending — money moved into something you own.</p>
+          </div>
+          <div className="overflow-y-auto flex-1 px-3 py-2 space-y-3">
+            <fieldset>
+              <legend className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Apply to</legend>
+              {!forceMerchantRule && (
+              <label className="mt-1 flex items-start gap-2 text-sm text-gray-800">
+                <input
+                  type="radio"
+                  name="asset-scope"
+                  checked={!applyToMerchant}
+                  onChange={() => setApplyToMerchant(false)}
+                  className="mt-1"
+                />
+                <span>Only this transaction</span>
+              </label>
+              )}
+              <label className="mt-1 flex items-start gap-2 text-sm text-gray-800">
+                <input
+                  type="radio"
+                  name="asset-scope"
+                  checked={applyToMerchant}
+                  onChange={() => setApplyToMerchant(true)}
+                  className="mt-1"
+                />
+                <span>All from this merchant</span>
+              </label>
+            </fieldset>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Link to asset</p>
+              <p className="mt-0.5 text-[11px] text-gray-500">Optional. You can skip this.</p>
+              {assets.length === 0 ? (
+                <p className="mt-1 text-xs text-gray-500">No assets yet — skip, or add one on the Assets page.</p>
+              ) : (
+                <ul className="mt-1 max-h-36 space-y-0.5 overflow-y-auto">
+                  {assets.map((asset) => (
+                    <li key={asset.id}>
+                      <button
+                        type="button"
+                        onClick={() => setLinkAssetId((id) => (id === asset.id ? "" : asset.id))}
+                        className={`flex w-full items-center rounded-lg px-2 py-1.5 text-left text-sm ${
+                          linkAssetId === asset.id
+                            ? "bg-indigo-50 font-semibold text-indigo-900"
+                            : "text-gray-700 hover:bg-gray-50"
+                        }`}
+                      >
+                        {linkAssetId === asset.id ? "Link to asset: " : ""}{asset.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {linkAssetId && (
+                <label className="mt-2 block text-[11px] text-gray-500">
+                  Part of this amount (optional)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={linkAmount}
+                    onChange={(e) => setLinkAmount(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-gray-200 px-2 py-1 text-sm text-gray-900"
+                    placeholder="Whole transaction"
+                  />
+                </label>
+              )}
+            </div>
+          </div>
+          <div className="shrink-0 border-t border-gray-100 p-2">
+            <button
+              type="button"
+              onClick={confirmAssetPurchase}
+              className="w-full rounded-lg bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      ) : (
+      <>
       {bannerText !== null && bannerText !== "" && (
       <p className="shrink-0 px-3 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
         {bannerText}
@@ -140,7 +312,7 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHi
               {/* Parent row */}
               <div className="flex items-center">
                 <button
-                  onClick={() => onSelect(parent)}
+                  onClick={() => pickCategory(parent)}
                   className={`flex flex-1 items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-gray-50 ${
                     isActivePar ? "font-semibold text-gray-900" : "text-gray-700"
                   }`}
@@ -172,7 +344,7 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHi
                     return (
                       <button
                         key={sub}
-                        onClick={() => onSelect(sub)}
+                        onClick={() => pickCategory(sub)}
                         className={`flex w-full items-center gap-2.5 pl-3 pr-3 py-1.5 text-left text-[13px] transition hover:bg-gray-50 ${
                           isActiveSub ? "font-semibold text-gray-900" : "text-gray-600"
                         }`}
@@ -209,6 +381,8 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHi
           );
         })}
       </div>
+      </>
+      )}
     </div>,
     document.body
   );
@@ -219,6 +393,77 @@ export function CategoryPicker({ anchorRef, current, onSelect, onClose, headerHi
 void PARENTS_WITH_SUBTYPES;
 void PICKER_CATEGORIES;
 void isSubtype;
+
+export type PersistCategoryChangeInput = {
+  token: string;
+  category: string;
+  merchant: string;
+  applyToMerchant: boolean;
+  amount: number;
+  date?: string;
+  stmtId?: string;
+  accountSlug?: string;
+  fingerprint?: string;
+  linkAssetId?: string;
+  linkAmount?: number;
+};
+
+/** Save a recategorize: this-txn override or merchant rule, then optional funds link. */
+export async function persistCategoryChange(
+  input: PersistCategoryChangeInput,
+): Promise<{ ok: boolean; error?: string }> {
+  const headers = { Authorization: `Bearer ${input.token}`, "Content-Type": "application/json" };
+  try {
+    if (input.applyToMerchant) {
+      const res = await fetch("/api/user/category-rules", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ merchant: input.merchant, category: input.category }),
+      });
+      if (!res.ok) return { ok: false, error: "Failed to save rule" };
+    } else {
+      const stmtId = input.stmtId || input.accountSlug;
+      if (!stmtId) return { ok: false, error: "Missing transaction id" };
+      const res = await fetch("/api/user/txn-category", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({
+          stmtId,
+          accountSlug: input.accountSlug,
+          date: input.date,
+          amount: input.amount,
+          merchant: input.merchant,
+          category: input.category,
+        }),
+      });
+      if (!res.ok) return { ok: false, error: "Failed to save category" };
+    }
+
+    if (input.linkAssetId && (input.fingerprint || (input.accountSlug && input.date))) {
+      const res = await fetch("/api/user/tx-links", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          fingerprint: input.fingerprint,
+          accountSlug: input.accountSlug,
+          date: input.date,
+          txnAmount: input.amount,
+          merchant: input.merchant,
+          hubId: input.linkAssetId,
+          role: "funds",
+          ...(input.linkAmount != null ? { amount: input.linkAmount } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        return { ok: true, error: typeof j.error === "string" ? j.error : "Category saved; could not link asset" };
+      }
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Failed to save" };
+  }
+}
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
