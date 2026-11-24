@@ -1248,6 +1248,8 @@ export default function ConsolidatedCurrentDashboard({
         yearMonth,
         calendarMonthTxns.map((t) => ({
           txMonth: yearMonth,
+          date: t.date,
+          accountSlug: (t as { accountSlug?: string }).accountSlug,
           amount: t.amount,
           category: t.category,
           merchant: matchingMerchantName(t),

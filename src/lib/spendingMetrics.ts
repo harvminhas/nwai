@@ -80,8 +80,23 @@ export function isTransferInterestOrCardServicing(
     opts?.merchant,
     opts?.forAggregateLabel === true,
   );
-  return kind === "card";
+  if (kind === "card") return true;
+
+  // Other/uncategorized now counts as spending, so a card payment or an
+  // own-account transfer the parser left in Other must not slip in.
+  if (parent === "Other" && opts?.merchant && OTHER_CARD_OR_OWN_TRANSFER_RE.test(opts.merchant)) {
+    return true;
+  }
+  return false;
 }
+
+/**
+ * Merchant text that marks an "Other" row as a credit-card payment or an
+ * own-account transfer (e.g. "AMEX CARDS", "SCOTIALN VSA", "TFR-TO C/C",
+ * "TD VISA"). E-transfers are not matched: rent and bills are often paid that way.
+ */
+export const OTHER_CARD_OR_OWN_TRANSFER_RE =
+  /\bamex\b|american express|\bvsa\b|\bvisa\b(?!\s*debit)|mastercard|master card|\bc\/c\b|credit card|\bTFR[-\s]?(TO|FR|FROM)\b|\bXFER\b/i;
 
 /**
  * Single exclusion for "is this spending?". Covers everything
@@ -172,6 +187,49 @@ function spendingAmount(txn: SpendingTxnLike, options?: MonthSpendingOptions): n
   );
 }
 
+const MIRROR_WINDOW_DAYS = 5;
+
+function dayNumber(date: string | undefined): number | null {
+  if (!date) return null;
+  const ms = Date.parse(date.slice(0, 10));
+  return Number.isNaN(ms) ? null : Math.round(ms / 86_400_000);
+}
+
+/**
+ * The same loan payment can appear twice: as a debit on the chequing account
+ * and as a payment row on the loan's own statement. Both are Installment
+ * Servicing. When two such rows on different accounts have the same amount
+ * within a few days, count one. A payment seen only on the loan statement
+ * still counts (it is the only record of the cash going out).
+ */
+function mirroredInstallmentPayments(
+  yearMonth: string,
+  expenseTxns: readonly SpendingTxnLike[],
+): Set<SpendingTxnLike> {
+  const skip = new Set<SpendingTxnLike>();
+  const rows = expenseTxns.filter((t) => {
+    if (txnMonth(t, yearMonth) !== yearMonth) return false;
+    if (!t.accountSlug || dayNumber(t.date) == null) return false;
+    return resolveDebtServicingKind(t.category ?? "", t.debtType, t.merchant, false) === "installment";
+  });
+  const used = new Set<SpendingTxnLike>();
+  for (let i = 0; i < rows.length; i++) {
+    const a = rows[i];
+    if (used.has(a)) continue;
+    for (let j = i + 1; j < rows.length; j++) {
+      const b = rows[j];
+      if (used.has(b) || b.accountSlug === a.accountSlug) continue;
+      if (Math.abs(Math.abs(a.amount) - Math.abs(b.amount)) > 0.01) continue;
+      if (Math.abs(dayNumber(a.date)! - dayNumber(b.date)!) > MIRROR_WINDOW_DAYS) continue;
+      used.add(a);
+      used.add(b);
+      skip.add(b);
+      break;
+    }
+  }
+  return skip;
+}
+
 /**
  * One month of spending and its line items.
  *
@@ -185,9 +243,11 @@ export function computeMonthSpending(
 ): MonthSpending {
   const linesByCategory = new Map<string, MonthSpendingLine>();
   let total = 0;
+  const mirrored = mirroredInstallmentPayments(yearMonth, expenseTxns);
 
   for (const txn of expenseTxns) {
     if (txnMonth(txn, yearMonth) !== yearMonth) continue;
+    if (mirrored.has(txn)) continue;
     if (isBalanceMarker(txn.merchant ?? "")) continue;
     if (
       isNotSpending(txn.category ?? "", {
