@@ -4,6 +4,7 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { buildIncomeSummary } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend } from "@/lib/bucketBreakdown";
+import { loadMerchantRenameContext } from "@/app/api/user/merchantRenameContext";
 import { averageCashFlow, cashFlowInputFromProfile } from "@/lib/monthlyCashFlow";
 import { resolveWindowMonths, formatMonthList, formatMonthName, type TimeRange } from "@/lib/rangeUtils";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
@@ -37,7 +38,10 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       return NextResponse.json({ error: "Missing bucket parameter" }, { status: 400 });
     }
 
-    const profile = await getFinancialProfile(decoded.uid, db);
+    const [profile, renameCtx] = await Promise.all([
+      getFinancialProfile(decoded.uid, db),
+      loadMerchantRenameContext(decoded.uid, db),
+    ]);
     const currentYear = new Date().getFullYear();
 
     // Load all user review context (income, debt, savings)
@@ -242,7 +246,8 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       reviewContext.debtPaymentReviews,
       profile.fxRates ?? {},
       profile.merchantCadence,
-      profile.confirmedSubscriptions
+      profile.confirmedSubscriptions,
+      renameCtx,
     );
 
     const trend = compute3MonthTrend(

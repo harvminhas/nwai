@@ -24,6 +24,10 @@ import { occurrencesInMonth, datesInMonth } from "@/lib/cashIncome";
 import type { CashIncomeEntry } from "@/lib/cashIncome";
 import { resolveTxnCurrencyFromSnapshots, getHomeCurrency } from "@/lib/currencyUtils";
 import { findAccountHistoryLabel, resolveAccountDisplayName, statementAccountDisplayName } from "@/lib/accountListLabel";
+import {
+  merchantRenameContextFromRecords,
+  overlayDisplayedMerchant,
+} from "@/lib/merchantAliases";
 
 /** Tag every expense and income transaction in a statement with its account label. */
 function tagTransactions(stmt: ParsedStatementData): ParsedStatementData {
@@ -142,7 +146,7 @@ export async function GET(request: NextRequest) {
     // month with actual transactions" — statement dates can be in the future
     // (e.g. a March statement with a statementDate of April 1) and should not
     // override the month that genuinely has the most recent transaction data.
-    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap, cashCommitmentsSnap, txnOverridesSnap, incomeTxnCatSnap, reviewContext] = await Promise.all([
+    const [rulesSnap, profile, sourceMappingsSnap, cashIncomeSnap, incomeCatRulesSnap, cashCommitmentsSnap, txnOverridesSnap, incomeTxnCatSnap, reviewContext, displayNamesSnap] = await Promise.all([
       db.collection(`users/${uid}/categoryRules`).get(),
       getFinancialProfile(uid, db),
       db.collection(`users/${uid}/sourceMappings`).get(),
@@ -152,6 +156,7 @@ export async function GET(request: NextRequest) {
       db.collection(`users/${uid}/txnCategoryOverrides`).get(),
       db.collection(`users/${uid}/incomeTxnCategories`).get(),
       loadUserReviewContext(uid, db),
+      db.collection(`users/${uid}/merchantDisplayNames`).get(),
     ]);
     const txnOverridesMap = new Map<string, string>();
     for (const doc of txnOverridesSnap.docs) {
@@ -181,6 +186,13 @@ export async function GET(request: NextRequest) {
       id: d.id,
       ...(d.data() as Omit<SourceMapping, "id">),
     }));
+    const renameCtx = merchantRenameContextFromRecords(
+      existingMappings,
+      displayNamesSnap.docs.map((doc) => ({
+        id: doc.id,
+        displayName: (doc.data() as { displayName?: string }).displayName,
+      })),
+    );
     // Confirmed income mappings — applied when building incomeSourceHistory so
     // merged aliases are folded into the canonical name before suggestions run.
     const confirmedIncomeMappings = existingMappings.filter(
@@ -727,6 +739,7 @@ export async function GET(request: NextRequest) {
           transactions: monthExpTxns.map((t) => ({
             date: t.date,
             merchant: t.merchant,
+            rawMerchant: t.merchant,
             amount: t.amount,
             category: t.category,
             accountLabel: t.accountLabel,
@@ -808,6 +821,18 @@ export async function GET(request: NextRequest) {
           }));
         })()
       : [];
+
+    if (enrichedConsolidated.expenses?.transactions) {
+      enrichedConsolidated = {
+        ...enrichedConsolidated,
+        expenses: {
+          ...enrichedConsolidated.expenses,
+          transactions: enrichedConsolidated.expenses.transactions.map((t) =>
+            overlayDisplayedMerchant(t, renameCtx),
+          ),
+        },
+      };
+    }
 
     return NextResponse.json({
       data: enrichedConsolidated,

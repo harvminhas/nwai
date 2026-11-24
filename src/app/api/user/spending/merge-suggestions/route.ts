@@ -7,13 +7,19 @@ import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { merchantSlug } from "@/lib/applyRules";
 import { resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
 import { isCoreExcluded } from "@/lib/spendingMetrics";
-import { buildMerchantAliasResolver } from "@/lib/merchantAliases";
+import {
+  buildMerchantAliasResolver,
+  merchantDisplayNameForSlug,
+  merchantDisplayNamesFromRecords,
+} from "@/lib/merchantAliases";
 import { findDuplicateGroups } from "@/lib/merchantDuplicates";
 
 export const dynamic = "force-dynamic";
 
 interface MerchantMember {
   name: string;
+  /** Saved rename when present — display only; matching still uses `name`. */
+  displayName?: string;
   slug: string;
   total: number;
   txCount: number;
@@ -57,9 +63,18 @@ export async function GET(req: NextRequest) {
     const windowMonths = windowResult.months;
 
     // Load source mappings so already-merged names resolve to their canonical
-    const mappingsSnap = await db.collection(`users/${access.targetUid}/sourceMappings`).get();
+    const [mappingsSnap, displayNamesSnap] = await Promise.all([
+      db.collection(`users/${access.targetUid}/sourceMappings`).get(),
+      db.collection(`users/${access.targetUid}/merchantDisplayNames`).get(),
+    ]);
     const mappings = mappingsSnap.docs.map(doc => doc.data() as { canonical: string; alias: string; status?: string; type?: string });
     const aliasResolver = buildMerchantAliasResolver(mappings);
+    const displayNameMap = merchantDisplayNamesFromRecords(
+      displayNamesSnap.docs.map((doc) => ({
+        id: doc.id,
+        displayName: (doc.data() as { displayName?: string }).displayName,
+      })),
+    );
 
     // One entry per canonical merchant, across every category it appears in
     const merchantMap = new Map<string, {
@@ -104,8 +119,10 @@ export async function GET(req: NextRequest) {
       const orderedCategories = [...m.categories.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
       // Most frequently seen spelling is the readable name
       const name = [...m.names.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? m.slug;
+      const displayName = merchantDisplayNameForSlug(m.slug, displayNameMap);
       return {
         name,
+        ...(displayName ? { displayName } : {}),
         slug: m.slug,
         total: m.total,
         txCount: m.txCount,

@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import { categoryColor, CategoryPicker } from "@/app/account/spending/shared";
 import { txnKey } from "@/lib/applyRules";
+import { matchingMerchantName } from "@/lib/merchantAliases";
 import type { MerchantSummary } from "@/app/api/user/spending/merchants/route";
 import { formatCurrency, formatCurrencyWithCents, getCurrencySymbol } from "@/lib/currencyUtils";
 import {
@@ -222,7 +223,7 @@ export default function MerchantDetailPage() {
       transactions: m.transactions.map((t) =>
         (t.stmtId === txn.stmtId && t.date === txn.date &&
           Math.round(Math.abs(t.amount) * 100) === Math.round(Math.abs(txn.amount) * 100) &&
-          t.merchant === txn.merchant)
+          matchingMerchantName(t) === matchingMerchantName(txn))
           ? { ...t, category: newCategory }
           : t,
       ),
@@ -235,7 +236,7 @@ export default function MerchantDetailPage() {
           stmtId: txn.stmtId,
           date: txn.date,
           amount: txn.amount,
-          merchant: txn.merchant,
+          merchant: matchingMerchantName(txn),
           category: newCategory,
         }),
       });
@@ -246,7 +247,7 @@ export default function MerchantDetailPage() {
         transactions: m.transactions.map((t) =>
           (t.stmtId === txn.stmtId && t.date === txn.date &&
             Math.round(Math.abs(t.amount) * 100) === Math.round(Math.abs(txn.amount) * 100) &&
-            t.merchant === txn.merchant)
+            matchingMerchantName(t) === matchingMerchantName(txn))
             ? { ...t, category: txn.category }
             : t,
         ),
@@ -647,7 +648,7 @@ export default function MerchantDetailPage() {
                           )}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-gray-800">{m.name}</p>
+                          <p className="truncate text-sm font-medium text-gray-800">{m.displayName ?? m.name}</p>
                           <p className="mt-0.5 text-xs text-gray-500">
                             {allCount} {vocab.visit}{allCount !== 1 ? "s" : ""} · {formatCurrency(allTotal, homeCurrency, m.currency, true)} total
                             {m.category && m.category !== merchant.category && (

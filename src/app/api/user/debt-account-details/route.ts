@@ -4,6 +4,8 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import type { DebtPaymentReview } from "@/lib/types";
 import type { ExpenseTxnRecord } from "@/lib/extractTransactions";
+import { displayedMerchantName } from "@/lib/merchantAliases";
+import { loadMerchantRenameContext } from "@/app/api/user/merchantRenameContext";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +65,10 @@ export async function GET(req: NextRequest) {
       reviewedAt: doc.get("reviewedAt"),
     }));
 
-    const profile = await getFinancialProfile(decoded.uid, db);
+    const [profile, renameCtx] = await Promise.all([
+      getFinancialProfile(decoded.uid, db),
+      loadMerchantRenameContext(decoded.uid, db),
+    ]);
     
     // Currency conversion helper
     const fxRates = profile.fxRates ?? {};
@@ -114,7 +119,11 @@ export async function GET(req: NextRequest) {
 
       const detail: DebtTransactionDetail = {
         date: txn.date,
-        description: txn.merchant,
+        description: displayedMerchantName(
+          txn.merchant,
+          renameCtx.aliasResolver,
+          renameCtx.displayNames,
+        ),
         amount: toHome(Math.abs(txn.amount), txn.currency),
         isAnomaly,
         isReviewed,

@@ -13,7 +13,11 @@ import { isCoreExcluded } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
 import { computeScheduledDebtPayments } from "./debtPayments";
 import { merchantSlug } from "./applyRules";
-import { normalizeMerchantName, detectRecurringMonthlyAmount, resolveMerchantAlias, resolveCanonicalMerchantSlug } from "./merchantUtils";
+import {
+  displayedMerchantName,
+  resolveSpendingMerchant,
+  type MerchantRenameContext,
+} from "./merchantAliases";
 import { monthsForCashFlowAverage } from "./cashFlowAverage";
 import { computeAverageBuckets } from "./monthlyBucketComputation";
 
@@ -21,6 +25,8 @@ export interface MerchantTransaction {
   date: string;
   amount: number;
   description: string;
+  /** Statement descriptor when `description` is a saved rename. */
+  rawName?: string;
   accountSlug: string;
   accountLabel?: string;
 }
@@ -104,7 +110,8 @@ export function computeBucketBreakdown(
   userReviews: DebtPaymentReview[] = [],
   fxRates: Record<string, number> = {},
   merchantCadence?: Record<string, string>,
-  subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>
+  subscriptions?: Array<{ merchantSlug: string; amount: number | null; frequency: string | null; status: string }>,
+  renameCtx?: MerchantRenameContext | null,
 ): BucketDetailedBreakdown {
   // Filter transactions to selected months
   const txnsInWindow = expenseTxns.filter(t => months.includes(t.txMonth));
@@ -255,9 +262,12 @@ export function computeBucketBreakdown(
     const merchantMap = new Map<string, { total: number; displayName: string; txns: typeof txns }>();
     
     for (const txn of txns) {
-      const rawSlug = merchantSlug(txn.merchant || "Unknown");
-      // Resolve to canonical slug for grouping (merges aliases)
-      const slug = resolveCanonicalMerchantSlug(rawSlug);
+      const resolved = resolveSpendingMerchant(
+        txn.merchant || "Unknown",
+        renameCtx?.aliasResolver,
+        renameCtx?.displayNames,
+      );
+      const slug = resolved.slug;
       const existing = merchantMap.get(slug);
       
       if (existing) {
@@ -265,10 +275,9 @@ export function computeBucketBreakdown(
         existing.total += Math.abs(txn.amount);
         existing.txns.push(txn);
       } else {
-        // New merchant - resolve aliases and normalize name for display
         merchantMap.set(slug, {
           total: Math.abs(txn.amount),
-          displayName: resolveMerchantAlias(slug, txn.merchant || "Unknown"),
+          displayName: resolved.name,
           txns: [txn],
         });
       }
@@ -283,13 +292,21 @@ export function computeBucketBreakdown(
         const monthlyAvg = data.total / (months.length || 1);
         
         // Build transaction list for expandable detail view
-        const transactions: MerchantTransaction[] = data.txns.map(t => ({
-          date: t.date,
-          amount: Math.abs(t.amount),
-          description: t.merchant || '',
-          accountSlug: t.accountSlug,
-          accountLabel: t.accountLabel,
-        }));
+        const transactions: MerchantTransaction[] = data.txns.map(t => {
+          const rawName = t.merchant || "";
+          return {
+            date: t.date,
+            amount: Math.abs(t.amount),
+            description: displayedMerchantName(
+              rawName,
+              renameCtx?.aliasResolver,
+              renameCtx?.displayNames,
+            ),
+            rawName,
+            accountSlug: t.accountSlug,
+            accountLabel: t.accountLabel,
+          };
+        });
         
         return {
           merchant: data.displayName,

@@ -13,8 +13,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { txFingerprint } from "@/lib/txFingerprint";
 import { displayNameFromProfileAccount } from "@/lib/accountListLabel";
+import { loadMerchantRenameContext } from "@/app/api/user/merchantRenameContext";
+import {
+  spendingTransactionApiRow,
+  spendingTransactionMatchesQuery,
+} from "@/lib/spendingTransactions";
 
 export async function GET(req: NextRequest) {
   const { db } = getFirebaseAdmin();
@@ -28,7 +32,10 @@ export async function GET(req: NextRequest) {
   const q       = (params.get("q") ?? "").toLowerCase().trim();
 
   try {
-    const profile = await getFinancialProfile(targetUid, db);
+    const [profile, renameCtx] = await Promise.all([
+      getFinancialProfile(targetUid, db),
+      loadMerchantRenameContext(targetUid, db),
+    ]);
 
     const cutoff = (() => {
       const d = new Date();
@@ -38,17 +45,14 @@ export async function GET(req: NextRequest) {
 
     const txns = profile.expenseTxns
       .filter((tx) => tx.txMonth >= cutoff)
-      .filter((tx) => !q || tx.merchant.toLowerCase().includes(q))
-      .map((tx) => ({
-        fingerprint:  txFingerprint(tx.accountSlug, tx.date, tx.amount, tx.merchant),
-        date:         tx.date,
-        merchant:     tx.merchant,
-        amount:       Math.abs(tx.amount),
-        category:     tx.category,
-        accountLabel: displayNameFromProfileAccount(tx.accountSlug, profile, tx.accountLabel),
-        accountSlug:  tx.accountSlug,
-        txMonth:      tx.txMonth,
-      }))
+      .map((tx) =>
+        spendingTransactionApiRow(
+          tx,
+          renameCtx,
+          displayNameFromProfileAccount(tx.accountSlug, profile, tx.accountLabel),
+        ),
+      )
+      .filter((tx) => spendingTransactionMatchesQuery(tx, q))
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, limit);
 

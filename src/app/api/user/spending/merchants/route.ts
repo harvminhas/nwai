@@ -10,6 +10,7 @@ import {
   buildMerchantAliasResolver,
   merchantDisplayNameForSlug,
   merchantDisplayNamesFromRecords,
+  overlayDisplayedMerchant,
 } from "@/lib/merchantAliases";
 import type { ParsedStatementData, ExpenseTransaction } from "@/lib/types";
 import { statementAccountDisplayName } from "@/lib/accountListLabel";
@@ -286,15 +287,16 @@ export async function GET(request: NextRequest) {
     }
 
     // Build result array
+    const renameCtx = { aliasResolver, displayNames: displayNameMap };
     const merchants: MerchantSummary[] = Array.from(map.entries()).map(([slug, e]) => {
       const name = Object.entries(e.names).sort((a, b) => b[1] - a[1])[0]?.[0] ?? slug;
       const sortedDates = [...e.dates].sort();
       const monthly = Array.from(e.monthly.entries())
         .map(([ym, v]) => ({ ym, ...v }))
         .sort((a, b) => a.ym.localeCompare(b.ym));
-      const transactions = [...e.transactions].sort((a, b) =>
-        (b.date ?? b.ym).localeCompare(a.date ?? a.ym)
-      );
+      const transactions = [...e.transactions]
+        .sort((a, b) => (b.date ?? b.ym).localeCompare(a.date ?? a.ym))
+        .map((t) => overlayDisplayedMerchant(t, renameCtx));
       // All unique categories across transactions (for per-txn category model)
       const categoryTotals = new Map<string, number>();
       for (const t of transactions) {
@@ -372,7 +374,12 @@ export async function GET(request: NextRequest) {
           .filter((m) => m.slug !== slugFilter)
           .sort((a, b) => b.total - a.total)
           .slice(0, 5)
-          .map((m) => ({ name: m.name, slug: m.slug, total: m.total, currency: m.currency }));
+          .map((m) => ({
+            name: m.displayName ?? m.name,
+            slug: m.slug,
+            total: m.total,
+            currency: m.currency,
+          }));
       }
 
       return NextResponse.json({ merchant: target, similarMerchants, categoryPeers, categoryTotal, homeCurrency });

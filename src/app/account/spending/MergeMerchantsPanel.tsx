@@ -6,11 +6,16 @@ import { findRelatedMerchants } from "@/lib/merchantDuplicates";
 
 export interface MerchantOption {
   name: string;
+  displayName?: string;
   slug: string;
   total: number;
   txCount: number;
   category: string;
   categories?: string[];
+}
+
+function merchantLabel(m: { name: string; displayName?: string }): string {
+  return m.displayName || m.name;
 }
 
 interface MergeCluster {
@@ -71,6 +76,7 @@ export function MergeMerchantsPanel({
         const suggestions = await res.json();
         const merchantList: MerchantOption[] = (suggestions.merchants || []).map((m: any) => ({
           name: m.name,
+          displayName: m.displayName,
           slug: m.slug,
           total: m.total,
           txCount: m.txCount,
@@ -139,7 +145,11 @@ export function MergeMerchantsPanel({
     if (query.length < 2) return [];
     return allMerchants
       .filter((m) => m.slug !== target?.slug)
-      .filter((m) => m.name.toLowerCase().includes(query) || m.slug.includes(query))
+      .filter((m) =>
+        merchantLabel(m).toLowerCase().includes(query) ||
+        m.name.toLowerCase().includes(query) ||
+        m.slug.includes(query)
+      )
       .slice(0, 30);
   }, [search, allMerchants, target]);
 
@@ -176,6 +186,7 @@ export function MergeMerchantsPanel({
       setAllMerchants(
         (json.merchants || []).map((m: any) => ({
           name: m.name,
+          displayName: m.displayName,
           slug: m.slug,
           total: m.total,
           txCount: m.txCount,
@@ -373,7 +384,7 @@ export function MergeMerchantsPanel({
                         className="h-4 w-4 rounded border-neutral-300 text-purple-600"
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-neutral-900">{m.name}</div>
+                        <div className="truncate text-sm font-medium text-neutral-900">{merchantLabel(m)}</div>
                         <div className="text-xs text-neutral-500">
                           {m.category} · {m.txCount} transaction{m.txCount === 1 ? "" : "s"}
                         </div>
@@ -404,7 +415,7 @@ export function MergeMerchantsPanel({
                           className="h-4 w-4 rounded border-neutral-300 text-purple-600"
                         />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium text-neutral-900">{m.name}</div>
+                          <div className="truncate text-sm font-medium text-neutral-900">{merchantLabel(m)}</div>
                           <div className="text-xs text-neutral-500">
                             {m.category} - {m.txCount} transaction{m.txCount === 1 ? "" : "s"}
                           </div>
@@ -444,7 +455,7 @@ export function MergeMerchantsPanel({
                             className="h-4 w-4 rounded border-neutral-300 text-purple-600"
                           />
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm text-neutral-900">{m.name}</div>
+                            <div className="truncate text-sm text-neutral-900">{merchantLabel(m)}</div>
                             <div className="text-xs text-neutral-500">
                               {m.category} · {m.txCount} transaction{m.txCount === 1 ? "" : "s"}
                             </div>
@@ -486,7 +497,7 @@ export function MergeMerchantsPanel({
                         onClick={() => chooseTarget(m)}
                         className="flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left hover:bg-neutral-50"
                       >
-                        <span className="flex-1 truncate text-sm text-neutral-900">{m.name}</span>
+                        <span className="flex-1 truncate text-sm text-neutral-900">{merchantLabel(m)}</span>
                         <span className="text-xs text-neutral-500">{m.category}</span>
                       </button>
                     ))}
@@ -517,7 +528,7 @@ export function MergeMerchantsPanel({
                         </div>
                       </div>
                       <div className="mt-1 text-xs text-neutral-500">
-                        {cluster.members.map((m) => m.name).join(" · ")}
+                        {cluster.members.map((m) => merchantLabel(m)).join(" · ")}
                       </div>
                     </button>
                   );
@@ -545,7 +556,7 @@ export function MergeMerchantsPanel({
                           onClick={() => chooseTarget(m)}
                           className="flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left hover:bg-neutral-50"
                         >
-                          <span className="flex-1 truncate text-sm text-neutral-900">{m.name}</span>
+                          <span className="flex-1 truncate text-sm text-neutral-900">{merchantLabel(m)}</span>
                           <span className="text-xs text-neutral-500">{m.category}</span>
                           <span className="text-sm text-neutral-700 tabular-nums">
                             {formatAmount(m.total, currency)}

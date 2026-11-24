@@ -10,6 +10,7 @@ import {
   CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
 import { merchantSlug } from "@/lib/applyRules";
+import { matchingMerchantName } from "@/lib/merchantAliases";
 import {
   categoryColor, CategoryPicker, RecurringIcon,
   type CashFrequency,
@@ -64,6 +65,7 @@ const FREQ_OPTIONS: { value: CashFrequency; label: string }[] = [
 
 interface ExpenseTxn {
   merchant: string;
+  rawMerchant?: string;
   amount: number;
   category: string;
   accountLabel?: string;
@@ -394,7 +396,7 @@ export default function SpendingCategoryPage() {
       const res = await fetch("/api/user/category-rules", {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant: txn.merchant, category: newCategory }),
+        body: JSON.stringify({ merchant: matchingMerchantName(txn), category: newCategory }),
       });
       if (res.ok) { setToast(`Rule saved: "${txn.merchant}" → ${newCategory}`); requestProfileRefresh(); }
       else setToast("Failed to save rule");
@@ -403,7 +405,7 @@ export default function SpendingCategoryPage() {
 
   function handleRecurringToggle(txn: ExpenseTxn, anchorEl: HTMLElement) {
     if (!token) return;
-    const slug = merchantSlug(txn.merchant);
+    const slug = merchantSlug(matchingMerchantName(txn));
     if (recurringRules.has(slug)) {
       setRecurringRules((prev) => { const next = new Map(prev); next.delete(slug); return next; });
       fetch(`/api/user/recurring-rules?slug=${encodeURIComponent(slug)}`, {
@@ -419,10 +421,10 @@ export default function SpendingCategoryPage() {
   async function confirmRecurring() {
     if (!token || !pendingRecurring) return;
     const { txn } = pendingRecurring;
-    const slug = merchantSlug(txn.merchant);
+    const slug = merchantSlug(matchingMerchantName(txn));
     setRecurringRules((prev) => {
       const next = new Map(prev);
-      next.set(slug, { name: txn.merchant, amount: txn.amount, frequency: pendingFreq });
+      next.set(slug, { name: matchingMerchantName(txn), amount: txn.amount, frequency: pendingFreq });
       return next;
     });
     setPendingRecurring(null);
@@ -430,7 +432,7 @@ export default function SpendingCategoryPage() {
       await fetch("/api/user/recurring-rules", {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant: txn.merchant, amount: txn.amount, frequency: pendingFreq, category: txn.category }),
+        body: JSON.stringify({ merchant: matchingMerchantName(txn), amount: txn.amount, frequency: pendingFreq, category: txn.category }),
       });
       setToast(`"${txn.merchant}" marked as recurring (${pendingFreq})`);
     } catch { setToast("Failed to save"); }
@@ -543,7 +545,7 @@ export default function SpendingCategoryPage() {
   // ── shared transaction row renderer ──────────────────────────────────────────
 
   function renderTxnRow(txn: ExpenseTxn, pickerKey: string) {
-    const slug       = merchantSlug(txn.merchant);
+    const slug       = merchantSlug(matchingMerchantName(txn));
     const isManualSub = recurringRules.has(slug);
     const txnColor   = categoryColor(txn.category?.toLowerCase() ?? "other");
     return (
@@ -553,7 +555,7 @@ export default function SpendingCategoryPage() {
             <span className="block truncate text-sm font-medium text-gray-800">{txn.merchant}</span>
           ) : (
             <button
-              onClick={() => openDrawer(merchantSlug(txn.merchant))}
+              onClick={() => openDrawer(merchantSlug(matchingMerchantName(txn)))}
               className="block truncate text-left text-sm font-medium text-gray-800 hover:text-purple-600 hover:underline w-full"
             >
               {txn.merchant}

@@ -17,6 +17,11 @@ import { getHomeCurrency, toHome as toHomeCurrency } from "@/lib/currencyUtils";
 import type { ToolName } from "@/lib/chat/tools";
 import { TOOL_NAMES } from "@/lib/chat/tools";
 import {
+  displayedMerchantName,
+  resolveSpendingMerchant,
+  type MerchantRenameContext,
+} from "@/lib/merchantAliases";
+import {
   averageCashFlow,
   cashFlowInputFromProfile,
   getMonthlyCashFlow,
@@ -88,6 +93,7 @@ export function executeSearchTransactions(
   profile: FinancialProfileCache,
   params: ToolParams,
   context: UserReviewContext,
+  renameCtx?: MerchantRenameContext | null,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -107,8 +113,16 @@ export function executeSearchTransactions(
   // ── expense transactions ──────────────────────────────────────────────────
   let expenses = profile.expenseTxns; // newest-first
 
-  const matchesMerchant = (t: (typeof expenses)[0]) =>
-    merchant ? fuzzyMatch(merchant, t.merchant) : false;
+  const matchesMerchant = (t: (typeof expenses)[0]) => {
+    if (!merchant) return false;
+    if (fuzzyMatch(merchant, t.merchant)) return true;
+    const displayed = displayedMerchantName(
+      t.merchant,
+      renameCtx?.aliasResolver,
+      renameCtx?.displayNames,
+    );
+    return displayed !== t.merchant && fuzzyMatch(merchant, displayed);
+  };
 
   /** True if the transaction's category (or its parent) matches any of the requested categories. */
   const matchesCategories = (t: (typeof expenses)[0]) => {
@@ -141,7 +155,11 @@ export function executeSearchTransactions(
 
   const expenseRows = expenses.slice(0, limit).map((t) => ({
     date:     t.date,
-    merchant: t.merchant,
+    merchant: displayedMerchantName(
+      t.merchant,
+      renameCtx?.aliasResolver,
+      renameCtx?.displayNames,
+    ),
     amount:   fmt(toHomeCurrency(t.amount, t.currency, profile)),
     category: t.category,
     account:  t.accountLabel ?? t.accountSlug,
@@ -378,6 +396,7 @@ export function executeRollupMerchants(
   profile: FinancialProfileCache,
   params: ToolParams,
   context: UserReviewContext,
+  renameCtx?: MerchantRenameContext | null,
 ): ToolResult {
   const home = getHomeCurrency(profile);
   const fxRates = profile.fxRates ?? {};
@@ -414,7 +433,11 @@ export function executeRollupMerchants(
     ) {
       continue;
     }
-    const name = (t.merchant ?? "Unknown").trim() || "Unknown";
+    const name = resolveSpendingMerchant(
+      (t.merchant ?? "Unknown").trim() || "Unknown",
+      renameCtx?.aliasResolver,
+      renameCtx?.displayNames,
+    ).name;
     const homeAmt = toHomeCurrency(t.amount, t.currency, profile);
     const prev = merchantTotals.get(name) ?? { total: 0, count: 0 };
     merchantTotals.set(name, { total: prev.total + homeAmt, count: prev.count + 1 });
@@ -1029,6 +1052,7 @@ type ToolHandler = (
   profile: FinancialProfileCache,
   params: ToolParams,
   context: UserReviewContext,
+  renameCtx?: MerchantRenameContext | null,
 ) => ToolResult;
 
 const TOOL_HANDLERS = {
@@ -1057,9 +1081,10 @@ export function executeTool(
   params: ToolParams,
   profile: FinancialProfileCache,
   context: UserReviewContext,
+  renameCtx?: MerchantRenameContext | null,
 ): ToolResult {
   if (!isToolName(name)) {
     return { ok: false, error: `Unknown tool: ${name}` };
   }
-  return TOOL_HANDLERS[name](profile, params, context);
+  return TOOL_HANDLERS[name](profile, params, context, renameCtx);
 }

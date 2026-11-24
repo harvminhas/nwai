@@ -4,6 +4,7 @@ import { getFinancialProfile } from "@/lib/financialProfile";
 import { buildSpendingSummary } from "@/lib/spendingSummary";
 import { resolveWindowMonths, type TimeRange } from "@/lib/rangeUtils";
 import type { DebtPaymentReview } from "@/lib/types";
+import { loadMerchantRenameContext } from "@/app/api/user/merchantRenameContext";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +30,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       ? rangeParam as TimeRange
       : "3mo";
 
-    const profile = await getFinancialProfile(decoded.uid, db);
+    const [profile, renameCtx] = await Promise.all([
+      getFinancialProfile(decoded.uid, db),
+      loadMerchantRenameContext(decoded.uid, db),
+    ]);
     
     // Resolve range to months
     // Pass account status map to exclude paid-off/closed accounts from completeness checks
@@ -56,7 +60,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       userReviews,
       profile.fxRates || {},
       profile.homeCurrency,
-      windowResult.months
+      windowResult.months,
+      renameCtx,
     );
 
     return NextResponse.json({
