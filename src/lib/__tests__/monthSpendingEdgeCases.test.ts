@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeMonthSpending, isNotSpending } from "../spendingMetrics";
+import { themeAmountsFromSpending } from "../dailySpend";
 
 const MONTH = "2026-10";
 const row = (o: Record<string, unknown>) => ({
@@ -47,5 +48,24 @@ describe("computeMonthSpending edge cases", () => {
         row({ category: "Installment Servicing", debtType: "auto_loan", merchant: "Loan A", amount: 300, date: `${MONTH}-15` }),
       ]).total,
     ).toBe(600);
+  });
+
+  it("counts a mortgage once when chequing tags it Housing > Mortgage and the mortgage statement shows the payment", () => {
+    const m = computeMonthSpending(MONTH, [
+      row({ category: "Mortgage", merchant: "TD MORTGAGE", amount: 2100, date: `${MONTH}-01` }),
+      row({ category: "Installment Servicing", debtType: "mortgage", merchant: "Payment", amount: 2100, date: `${MONTH}-02`, accountSlug: "td-mortgage" }),
+      row({ category: "Rent", merchant: "Landlord", amount: 900 }),
+    ]);
+    expect(m.total).toBe(3000);
+    expect(m.lines.map((l) => l.category).sort()).toEqual(["Mortgage", "Rent"]);
+    expect(themeAmountsFromSpending(m).housing).toBe(3000);
+  });
+
+  it("does not pair two Housing rows that are not loan payments", () => {
+    const m = computeMonthSpending(MONTH, [
+      row({ category: "Mortgage", merchant: "TD MORTGAGE", amount: 1000 }),
+      row({ category: "Mortgage", merchant: "TD MORTGAGE", amount: 1000, accountSlug: "joint" }),
+    ]);
+    expect(m.total).toBe(2000);
   });
 });

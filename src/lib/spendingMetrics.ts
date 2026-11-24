@@ -176,6 +176,11 @@ function txnMonth(txn: SpendingTxnLike, fallback: string): string {
   return txn.txMonth || txn.date?.slice(0, 7) || fallback;
 }
 
+/** Home-currency amount {@link computeMonthSpending} counts for one row. */
+export function monthSpendingAmount(txn: SpendingTxnLike, options?: MonthSpendingOptions): number {
+  return spendingAmount(txn, options);
+}
+
 function spendingAmount(txn: SpendingTxnLike, options?: MonthSpendingOptions): number {
   const native = Math.abs(txn.amount);
   if (!options?.homeCurrency && !options?.fxRates) return native;
@@ -195,22 +200,32 @@ function dayNumber(date: string | undefined): number | null {
   return Number.isNaN(ms) ? null : Math.round(ms / 86_400_000);
 }
 
+function isHousingMortgage(category: string | undefined): boolean {
+  const c = (category ?? "").trim();
+  return /^mortgage$/i.test(c) && getParentCategory(c) === "Housing";
+}
+
 /**
  * The same loan payment can appear twice: as a debit on the chequing account
- * and as a payment row on the loan's own statement. Both are Installment
- * Servicing. When two such rows on different accounts have the same amount
- * within a few days, count one. A payment seen only on the loan statement
- * still counts (it is the only record of the cash going out).
+ * and as a payment row on the loan's own statement. The debit may be tagged
+ * Installment Servicing or Housing › Mortgage; the loan-side row is
+ * Installment Servicing. When two such rows on different accounts have the
+ * same amount within a few days (at least one of them Installment Servicing),
+ * count one — keeping the Housing › Mortgage row when there is one. A payment
+ * seen only on the loan statement still counts (it is the only record of the
+ * cash going out).
  */
 function mirroredInstallmentPayments(
   yearMonth: string,
   expenseTxns: readonly SpendingTxnLike[],
 ): Set<SpendingTxnLike> {
   const skip = new Set<SpendingTxnLike>();
+  const isInstallment = (t: SpendingTxnLike) =>
+    resolveDebtServicingKind(t.category ?? "", t.debtType, t.merchant, false) === "installment";
   const rows = expenseTxns.filter((t) => {
     if (txnMonth(t, yearMonth) !== yearMonth) return false;
     if (!t.accountSlug || dayNumber(t.date) == null) return false;
-    return resolveDebtServicingKind(t.category ?? "", t.debtType, t.merchant, false) === "installment";
+    return isInstallment(t) || isHousingMortgage(t.category);
   });
   const used = new Set<SpendingTxnLike>();
   for (let i = 0; i < rows.length; i++) {
@@ -221,9 +236,10 @@ function mirroredInstallmentPayments(
       if (used.has(b) || b.accountSlug === a.accountSlug) continue;
       if (Math.abs(Math.abs(a.amount) - Math.abs(b.amount)) > 0.01) continue;
       if (Math.abs(dayNumber(a.date)! - dayNumber(b.date)!) > MIRROR_WINDOW_DAYS) continue;
+      if (!isInstallment(a) && !isInstallment(b)) continue;
       used.add(a);
       used.add(b);
-      skip.add(b);
+      skip.add(isInstallment(b) ? b : a);
       break;
     }
   }
