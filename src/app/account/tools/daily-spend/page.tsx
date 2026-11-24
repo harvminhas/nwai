@@ -16,6 +16,7 @@ import type {
 import {
   DAILY_SPEND_RANGES,
   DAILY_SPEND_INCLUDED_NOTE,
+  DAILY_SPEND_THEMES,
   monthlyKeep,
   NO_SPEND_THIS_MONTH_MESSAGE,
   whatIfSliderBounds,
@@ -24,7 +25,10 @@ import {
 import type { DailySpendTrackerView } from "@/lib/dailySpendTracker";
 import {
   HOUSING_EXCLUDED_FROM_TARGET_NOTE,
-  TRACKED_DAILY_SPEND_THEMES,
+  joinThemeLabels,
+  sameThemeSelection,
+  TRACKED_DAILY_SPEND_THEME_IDS,
+  trackableThemeIds,
   usualFromDailySpend,
 } from "@/lib/dailySpendTracker";
 import {
@@ -62,12 +66,6 @@ function moneyPerDay(amount: number, currency: string): string {
   return `${money(amount, currency)}/day`;
 }
 
-function themesLine(): string {
-  const labels = TRACKED_DAILY_SPEND_THEMES.map((t) => t.label);
-  if (labels.length <= 1) return labels[0] ?? "";
-  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
-  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
-}
 
 function DeltaPill({
   kind,
@@ -107,6 +105,11 @@ export default function DailySpendPage() {
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<DailySpendRange>("3m");
   const [data, setData] = useState<DailySpendPayload | null>(null);
+  // What-if chips. Start on the themes a tracker can cover; Housing stays
+  // available for the preview but is never tracked.
+  const [selectedThemeIds, setSelectedThemeIds] = useState<Set<DailySpendThemeId>>(
+    () => new Set(TRACKED_DAILY_SPEND_THEME_IDS),
+  );
   const [targetDaily, setTargetDaily] = useState<number | null>(null);
   const [openThemeId, setOpenThemeId] = useState<DailySpendThemeId | null>(null);
   const themeRowRefs = useRef<Partial<Record<DailySpendThemeId, HTMLButtonElement | null>>>({});
@@ -150,21 +153,37 @@ export default function DailySpendPage() {
     return () => abort.abort();
   }, [token, range]);
 
+  // When a tracker loads (or restarts), show its themes on the chips.
+  const trackerKey = data?.tracker
+    ? `${data.tracker.record.startedAt}|${data.tracker.record.trackedThemes.join(",")}`
+    : null;
+  useEffect(() => {
+    if (!trackerKey || !data?.tracker) return;
+    setSelectedThemeIds(new Set(data.tracker.record.trackedThemes));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackerKey]);
+
   const usualDaily = useMemo(() => {
     if (!data) return 0;
-    return usualFromDailySpend(data).usualDaily;
-  }, [data]);
+    return usualFromDailySpend(data, Array.from(selectedThemeIds)).usualDaily;
+  }, [data, selectedThemeIds]);
+
+  const housingSelected = selectedThemeIds.has("housing");
+  const trackableSelection = trackableThemeIds(selectedThemeIds);
+  const chipsMatchTracker = data?.tracker
+    ? sameThemeSelection(selectedThemeIds, data.tracker.record.trackedThemes)
+    : false;
 
   useEffect(() => {
     if (!data) return;
-    if (data.tracker) {
+    if (data.tracker && chipsMatchTracker) {
       setTargetDaily(data.tracker.record.targetDaily);
     } else {
       setTargetDaily(usualDaily);
     }
-  }, [data, usualDaily]);
+  }, [data, usualDaily, chipsMatchTracker]);
 
-  const savedTarget = data?.tracker?.record.targetDaily ?? null;
+  const savedTarget = chipsMatchTracker ? data?.tracker?.record.targetDaily ?? null : null;
   const bounds = whatIfSliderBounds(usualDaily);
   if (savedTarget != null) {
     bounds.min = Math.min(bounds.min, savedTarget);
@@ -187,7 +206,7 @@ export default function DailySpendPage() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ targetDaily: target, range }),
+        body: JSON.stringify({ targetDaily: target, range, trackedThemes: trackableSelection }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -395,9 +414,33 @@ export default function DailySpendPage() {
           <div className={STACK_CLASS}>
             <div className={CARD_CLASS}>
               <h2 className="text-sm font-semibold text-gray-900">What if</h2>
-              <p className="mt-2 text-sm text-gray-600">
-                {themesLine()}. {HOUSING_EXCLUDED_FROM_TARGET_NOTE}
-              </p>
+              <div className="mt-3 flex min-w-0 flex-wrap gap-2">
+                {DAILY_SPEND_THEMES.map((theme) => {
+                  const on = selectedThemeIds.has(theme.id);
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => {
+                        setSelectedThemeIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(theme.id)) next.delete(theme.id);
+                          else next.add(theme.id);
+                          return next;
+                        });
+                      }}
+                      className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                        on
+                          ? "border-gray-900 bg-gray-900 text-white"
+                          : "border-gray-200 bg-white text-gray-600"
+                      }`}
+                    >
+                      {theme.label}
+                    </button>
+                  );
+                })}
+              </div>
 
               <div className="mt-5">
                 <label htmlFor="daily-target" className="text-sm text-gray-600">
@@ -454,14 +497,28 @@ export default function DailySpendPage() {
               )}
 
               {!data.tracker ? (
-                <button
-                  type="button"
-                  onClick={saveTarget}
-                  disabled={saving || usualDaily <= 0}
-                  className={`mt-4 ${TRACKER_ACTION_CLASS}`}
-                >
-                  Start tracking
-                </button>
+                <>
+                  {housingSelected && (
+                    <p className="mt-4 text-sm text-gray-500">
+                      {HOUSING_EXCLUDED_FROM_TARGET_NOTE} Turn off Housing to start tracking.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={saveTarget}
+                    disabled={
+                      saving || housingSelected || trackableSelection.length === 0 || usualDaily <= 0
+                    }
+                    className={`mt-4 ${TRACKER_ACTION_CLASS}`}
+                  >
+                    Start tracking
+                  </button>
+                </>
+              ) : !chipsMatchTracker ? (
+                <p className="mt-4 text-sm text-gray-500">
+                  Your target tracks {joinThemeLabels(data.tracker.record.trackedThemes)}. Pick
+                  just those to update it.
+                </p>
               ) : (
                 targetChanged && (
                   <button

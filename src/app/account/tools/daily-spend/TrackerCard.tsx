@@ -6,8 +6,8 @@ import { formatCurrency } from "@/lib/currencyUtils";
 import { formatMonthYear } from "@/lib/dateFormatting";
 import {
   HOUSING_EXCLUDED_FROM_TARGET_NOTE,
+  joinThemeLabels,
   PACE_NOT_FINAL_LABEL,
-  TRACKED_DAILY_SPEND_THEMES,
   TRACKER_HISTORY_HREF,
   type DailySpendTrackerView,
 } from "@/lib/dailySpendTracker";
@@ -19,14 +19,6 @@ function money(amount: number, currency: string): string {
 
 function moneyPerDay(amount: number, currency: string): string {
   return `${money(amount, currency)}/day`;
-}
-
-function themesLine(): string {
-  const labels = TRACKED_DAILY_SPEND_THEMES.map((t) => t.label);
-  if (labels.length === 0) return "";
-  if (labels.length === 1) return labels[0];
-  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
-  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
 }
 
 export function TrackerCard({
@@ -58,7 +50,7 @@ export function TrackerCard({
         {moneyPerDay(record.targetDaily, currency)}
       </IntactAmount>
       <p className="mt-2 text-sm text-gray-600">
-        {themesLine()}. {HOUSING_EXCLUDED_FROM_TARGET_NOTE}
+        {joinThemeLabels(record.trackedThemes)}. {HOUSING_EXCLUDED_FROM_TARGET_NOTE}
       </p>
       <p className="mt-1 text-sm text-gray-500">
         Usual when you started: {moneyPerDay(record.usualDailyAtStart, currency)}
