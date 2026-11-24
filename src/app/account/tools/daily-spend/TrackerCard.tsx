@@ -42,6 +42,12 @@ export function TrackerCard({
 }) {
   const { record, pace, lastFinished, hitMiss } = view;
   const overLabels = lastFinished?.themesOverUsual.map((t) => t.label) ?? [];
+  // An edited target applies from next month; say so while this month still uses the old one.
+  const latestPeriod = record.periods[record.periods.length - 1];
+  const pendingTarget =
+    pace && record.periods.length > 1 && latestPeriod && latestPeriod.startMonth > pace.yearMonth
+      ? latestPeriod
+      : null;
 
   return (
     <div className={CARD_CLASS}>
@@ -57,6 +63,12 @@ export function TrackerCard({
       <p className="mt-1 text-sm text-gray-500">
         Usual when you started: {moneyPerDay(record.usualDailyAtStart, currency)}
       </p>
+      {pendingTarget && pace && (
+        <p className="mt-1 text-sm text-gray-500">
+          New target starts in {formatMonthYear(pendingTarget.startMonth)}. This month still uses{" "}
+          {moneyPerDay(pace.targetDaily, currency)}.
+        </p>
+      )}
 
       {pace && (
         <div className={`mt-4 ${PACE_PANEL_CLASS}`}>
