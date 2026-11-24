@@ -12,8 +12,10 @@ import {
   deltaKind,
   foodSplitForCategory,
   fullySavedSoonerLabel,
+  genericSubtypeForResidual,
   lastNCalendarMonths,
   lastNForRange,
+  leftoverRowLabel,
   NO_SPEND_THIS_MONTH_MESSAGE,
   monthlyKeep,
   monthsSooner,
@@ -28,6 +30,9 @@ import {
   yearlyKeep,
   EVEN_DELTA_THRESHOLD,
   THEME_SERIES_MONTHS,
+  TOP_EAT_OUT_PLACES_HEADING,
+  TOP_GROCERY_STORES_HEADING,
+  TOP_MERCHANTS_HEADING,
 } from "../dailySpend";
 
 function expense(
@@ -376,9 +381,23 @@ describe("theme subcategory daily rates sum to the theme", () => {
     );
     expect(eatingOutSum).toBeCloseTo(food!.eatingOutDaily ?? 0, 10);
     const labels = food!.detail.foodSplit!.eatingOutSubcategories.map((b) => b.label);
-    expect(labels).toEqual(
-      expect.arrayContaining(["Restaurants", "Coffee & Drinks", "Fast Food", "Food Delivery", "Dining"]),
+    expect(leftoverRowLabel("food", "Dining", genericSubtypeForResidual("Dining"))).toBe(
+      "Restaurants & dining",
     );
+    expect(labels).toEqual(
+      expect.arrayContaining([
+        "Restaurants & dining",
+        "Coffee & Drinks",
+        "Fast Food",
+        "Food Delivery",
+      ]),
+    );
+    expect(labels).not.toContain("Dining");
+    expect(labels).not.toContain("Restaurants");
+    const restaurants = food!.detail.foodSplit!.eatingOutSubcategories.find(
+      (b) => b.label === "Restaurants & dining",
+    );
+    expect(restaurants?.dailyRate).toBeCloseTo((93 + 90 + 93 + 15 + 15 + 15) / 92, 10);
   });
 
   it("sums Getting around subtypes (excluding car insurance) to the theme", () => {
@@ -394,6 +413,52 @@ describe("theme subcategory daily rates sum to the theme", () => {
     expect(sum).toBeCloseTo(around!.dailyRate, 10);
     expect(around!.dailyRate).toBeCloseTo((80 + 20 + 10) * 3 / 92, 10);
     expect(around!.detail.subcategories.map((b) => b.label)).not.toContain("Car Insurance");
+    expect(around!.detail.subcategories.map((b) => b.label)).not.toContain("Transportation");
+    expect(around!.detail.subcategories.map((b) => b.label)).toContain("Other Getting around");
+    const leftover = around!.detail.subcategories.find((b) => b.label === "Other Getting around");
+    expect(leftover?.dailyRate).toBeCloseTo((10 * 3) / 92, 10);
+  });
+
+  it("folds parent-only Dining leftover into Restaurants & dining, Other <theme> otherwise", () => {
+    const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
+      expense({ category: "Dining", amount: 45, txMonth: ym }),
+      expense({ category: "Shopping", amount: 20, txMonth: ym }),
+      expense({ category: "Clothing", amount: 40, txMonth: ym }),
+      expense({ category: "Entertainment", amount: 15, txMonth: ym }),
+      expense({ category: "Hobbies", amount: 25, txMonth: ym }),
+      expense({ category: "Personal Care", amount: 12, txMonth: ym }),
+      expense({ category: "Barber", amount: 30, txMonth: ym }),
+    ]);
+    const result = spend(txns);
+    const byId = Object.fromEntries(result.themes.map((t) => [t.id, t]));
+
+    const foodBars = byId.food.detail.foodSplit!.eatingOutSubcategories;
+    expect(foodBars.map((b) => b.label)).toContain("Restaurants & dining");
+    expect(foodBars.map((b) => b.label)).not.toContain("Dining");
+    expect(foodBars.find((b) => b.label === "Restaurants & dining")?.dailyRate).toBeCloseTo(
+      (45 * 3) / 92,
+      10,
+    );
+    const foodLeafSum = byId.food.detail.subcategories.reduce((s, b) => s + b.dailyRate, 0);
+    expect(foodLeafSum).toBeCloseTo(byId.food.dailyRate, 10);
+
+    const shoppingLabels = byId.shopping.detail.subcategories.map((b) => b.label);
+    expect(shoppingLabels).toContain("Other Shopping");
+    expect(shoppingLabels).not.toContain("Shopping");
+    const shoppingSum = byId.shopping.detail.subcategories.reduce((s, b) => s + b.dailyRate, 0);
+    expect(shoppingSum).toBeCloseTo(byId.shopping.dailyRate, 10);
+
+    const funLabels = byId.fun.detail.subcategories.map((b) => b.label);
+    expect(funLabels).toContain("Other Fun & going out");
+    expect(funLabels).not.toContain("Entertainment");
+    const funSum = byId.fun.detail.subcategories.reduce((s, b) => s + b.dailyRate, 0);
+    expect(funSum).toBeCloseTo(byId.fun.dailyRate, 10);
+
+    const careLabels = byId["personal-care"].detail.subcategories.map((b) => b.label);
+    expect(careLabels).toContain("Other Personal care");
+    expect(careLabels).not.toContain("Personal Care");
+    const careSum = byId["personal-care"].detail.subcategories.reduce((s, b) => s + b.dailyRate, 0);
+    expect(careSum).toBeCloseTo(byId["personal-care"].dailyRate, 10);
   });
 });
 
@@ -446,6 +511,68 @@ describe("merchant totals match Spending grouping for the same window", () => {
     expect(tims).toBeTruthy();
     expect(tims!.total).toBe(36);
     expect(tims!.dailyRate).toBeCloseTo(36 / 92, 10);
+
+    const groceryAmazon = food.detail.foodSplit!.groceryMerchants.find((m) => m.slug === "amazon");
+    expect(groceryAmazon).toBeTruthy();
+    expect(groceryAmazon!.total).toBe(450);
+    expect(groceryAmazon!.dailyRate).toBeCloseTo(450 / 92, 10);
+    expect(food.detail.foodSplit!.groceryMerchants.find((m) => m.name === "Tim Hortons")).toBeUndefined();
+
+    const eatOutTims = food.detail.foodSplit!.eatingOutMerchants.find((m) => m.name === "Tim Hortons");
+    expect(eatOutTims).toBeTruthy();
+    expect(eatOutTims!.total).toBe(36);
+    expect(food.detail.foodSplit!.eatingOutMerchants.find((m) => m.slug === "amazon")).toBeUndefined();
+  });
+
+  it("keeps grocery stores visible when eating-out merchants would crowd a mixed top 5", () => {
+    const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
+      expense({ category: "Groceries", amount: 20, txMonth: ym, merchant: "Loblaws" }),
+      expense({ category: "Restaurants", amount: 80, txMonth: ym, merchant: "Canoe" }),
+      expense({ category: "Fast Food", amount: 70, txMonth: ym, merchant: "McDonald's" }),
+      expense({ category: "Coffee & Drinks", amount: 60, txMonth: ym, merchant: "Starbucks" }),
+      expense({ category: "Food Delivery", amount: 50, txMonth: ym, merchant: "Uber Eats" }),
+      expense({ category: "Restaurants", amount: 40, txMonth: ym, merchant: "The Keg" }),
+    ]);
+    const food = spend(txns).themes.find((t) => t.id === "food")!;
+    expect(food.detail.merchants.find((m) => m.name === "Loblaws")).toBeUndefined();
+    expect(food.detail.foodSplit!.groceryMerchants.map((m) => m.name)).toEqual(["Loblaws"]);
+    expect(food.detail.foodSplit!.groceryMerchants[0].total).toBe(60);
+    expect(food.detail.foodSplit!.eatingOutMerchants.map((m) => m.name)).not.toContain("Loblaws");
+    expect(food.detail.foodSplit!.eatingOutMerchants).toHaveLength(5);
+    expect(TOP_GROCERY_STORES_HEADING).toBe("Top grocery stores");
+    expect(TOP_EAT_OUT_PLACES_HEADING).toBe("Top places you eat out");
+    expect(TOP_MERCHANTS_HEADING).toBe("Top 5 merchants");
+  });
+
+  it("shows the saved merchant rename from Spending, not the raw statement name", () => {
+    const raw = "GC 1176-cash Withdra";
+    const { slug, name: statementName } = resolveSpendingMerchant(raw);
+    expect(statementName).not.toBe("Honda Downpayment");
+    const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
+      expense({ category: "Shopping", amount: 80, txMonth: ym, merchant: raw }),
+      expense({ category: "Groceries", amount: 40, txMonth: ym, merchant: raw }),
+    ]);
+    const result = buildDailySpend({
+      expenseTxns: txns,
+      accountSnapshots: snapshots as never,
+      debtPaymentHistory: [],
+      userReviews: [],
+      fxRates: {},
+      currency: "CAD",
+      range: "3m",
+      merchantDisplayNames: [{ slug, displayName: "Honda Downpayment" }],
+    });
+    const shopping = result.themes.find((t) => t.id === "shopping")!;
+    const renamed = shopping.detail.merchants.find((m) => m.slug === slug);
+    expect(renamed).toBeTruthy();
+    expect(renamed!.name).toBe("Honda Downpayment");
+    expect(renamed!.name).not.toBe(raw);
+    expect(renamed!.name).not.toBe(statementName);
+
+    const food = result.themes.find((t) => t.id === "food")!;
+    expect(food.detail.foodSplit!.groceryMerchants.find((m) => m.slug === slug)?.name).toBe(
+      "Honda Downpayment",
+    );
   });
 });
 
@@ -466,6 +593,9 @@ describe("visits per month", () => {
     const loblaws = food.detail.merchants.find((m) => m.name === "Loblaws");
     expect(loblaws?.count).toBe(6);
     expect(loblaws?.visitsPerMonth).toBe(2);
+    const groceryLoblaws = food.detail.foodSplit!.groceryMerchants.find((m) => m.name === "Loblaws");
+    expect(groceryLoblaws?.count).toBe(6);
+    expect(groceryLoblaws?.visitsPerMonth).toBe(2);
   });
 });
 

@@ -1,9 +1,10 @@
 /**
  * GET /api/user/daily-spend?range=3m
  *
- * Thin adapter: auth → financial profile + the same review context and
- * source mappings Spending uses → {@link buildDailySpend}. Each theme
- * includes subcategory, merchant, and 6-month series detail. Read-only.
+ * Thin adapter: auth → financial profile + the same review context,
+ * source mappings, and merchant display names Spending uses →
+ * {@link buildDailySpend}. Each theme includes subcategory, merchant,
+ * and 6-month series detail. Read-only.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -22,10 +23,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   try {
     const range = parseDailySpendRange(new URL(req.url).searchParams.get("range"));
-    const [profile, reviews, mappingsSnap] = await Promise.all([
+    const [profile, reviews, mappingsSnap, displayNamesSnap] = await Promise.all([
       getFinancialProfile(access.targetUid, db),
       loadUserReviewContext(access.targetUid, db),
       db.collection(`users/${access.targetUid}/sourceMappings`).get(),
+      db.collection(`users/${access.targetUid}/merchantDisplayNames`).get(),
     ]);
     const sourceMappings = mappingsSnap.docs.map((doc) => {
       const data = doc.data() as {
@@ -41,6 +43,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         type: data.type,
       };
     });
+    const merchantDisplayNames = displayNamesSnap.docs.map((doc) => ({
+      slug: doc.id,
+      displayName: (doc.data() as { displayName?: string }).displayName ?? "",
+    }));
     const result = buildDailySpend({
       expenseTxns: profile.expenseTxns,
       accountSnapshots: profile.accountSnapshots,
@@ -50,6 +56,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       currency: profile.homeCurrency,
       range,
       sourceMappings,
+      merchantDisplayNames,
     });
     return NextResponse.json(result);
   } catch (error) {
