@@ -7,7 +7,7 @@
  */
 
 import { sendTextRequest } from "./ai";
-import { ALL_CATEGORY_VALUES } from "./categoryTaxonomy";
+import { PARSER_CATEGORY_VALUES, buildCategoryPromptLines } from "./categoryTaxonomy";
 import { isUploadedDocumentType, type UploadedDocumentType } from "./types";
 
 export interface ParsedRow {
@@ -60,27 +60,7 @@ Rules for transactions:
 - For income transactions (isExpense=false), set category to "Income"
 
 Use the most specific category or subtype. Parent categories and their subtypes:
-- "Housing"               -- rent, utilities, internet/phone, home insurance, condo fees
-     subtypes: "Rent" | "Utilities" | "Internet & Phone" | "Home Insurance" | "Condo Fees"
-- "Dining"                -- restaurants, food delivery, coffee shops, fast food
-     subtypes: "Restaurants" | "Coffee & Drinks" | "Fast Food" | "Food Delivery"
-- "Groceries"             -- grocery stores, supermarkets, bulk food (Costco, No Frills, Loblaws). No subtypes.
-- "Shopping"              -- retail, clothing, electronics, home goods, online shopping
-     subtypes: "Clothing" | "Electronics" | "Home & Garden" | "Online Shopping"
-- "Transportation"        -- gas stations, transit, parking, rideshare, auto service
-     subtypes: "Gas" | "Parking" | "Car Insurance" | "Transit" | "Rideshare" | "Auto Service"
-- "Entertainment"         -- streaming, movies, events, sports, hobbies
-     subtypes: "Streaming" | "Movies & Events" | "Sports" | "Hobbies"
-- "Subscriptions"         -- recurring monthly/annual charges
-     subtypes: "Software" | "Memberships" | "News & Media"
-- "Healthcare"            -- medical, pharmacy, dental, vision, fitness, health insurance
-     subtypes: "Pharmacy" | "Dental" | "Vision" | "Fitness" | "Health Insurance"
-- "Fees"                  -- bank fees, NSF/OD fees, annual card fees, service charges
-     subtypes: "Bank Fees" | "NSF/OD Fees" | "Annual Card Fee"
-- "Debt" -- subtype REQUIRED on outbound payments: "Installment Servicing" | "Card Servicing". Installment = mortgage/auto/student/personal loan debit from this account. Card Servicing = credit card or LOC payment settling revolving balances.
-- "Investments & Savings" -- RRSP/TFSA, investment transfers, mutual funds, GICs, life insurance. No subtypes.
-- "Transfers"             -- inter-account transfers, e-transfers to individuals. No subtypes.
-- "Other"                 -- anything else. No subtypes.
+${buildCategoryPromptLines()}
 Use a subtype (e.g. "Gas") when confident. Fall back to the parent (e.g. "Transportation") when unsure.
 
 Rules for balance (per transaction):
@@ -91,6 +71,14 @@ Rules for closingBalance:
 - If the CSV has a running balance column, set closingBalance to the balance on the transaction row with the MOST RECENT DATE (the highest date value) — regardless of which physical row position it appears at in the file (CSVs may be sorted newest-first or oldest-first)
 - If no balance column exists, set closingBalance to null
 - Always return closingBalance as a positive number (absolute value of the balance shown)`;
+
+/** Categories the CSV parser may assign. Excludes user-only tags such as Asset purchase. */
+export const CSV_PARSER_CATEGORIES = new Set([
+  ...PARSER_CATEGORY_VALUES,
+  "Transfers & Payments", // legacy
+  "Transfer Out",
+  "Income",
+]);
 
 export async function parseCSV(csvText: string, accountType?: string): Promise<CsvParseResult> {
   // Truncate to keep token usage reasonable. Keep the first couple of lines
@@ -132,13 +120,9 @@ export async function parseCSV(csvText: string, accountType?: string): Promise<C
     };
   }
 
-  // Build valid category set from taxonomy (parents + subtypes) + legacy values
-  const VALID_CATEGORIES = new Set([
-    ...ALL_CATEGORY_VALUES,
-    "Transfers & Payments", // legacy
-    "Transfer Out",
-    "Income",
-  ]);
+  // Parser feed excludes user-only tags (Asset purchase). If the model returns
+  // one, it falls through to Other / Income below.
+  const VALID_CATEGORIES = CSV_PARSER_CATEGORIES;
 
   type AiRow = { date?: string; description?: string; amount?: number; isExpense?: boolean; category?: string; balance?: number | null };
   type AiResponse = { documentType?: string; transactions?: AiRow[]; closingBalance?: number | null };

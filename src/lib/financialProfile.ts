@@ -63,7 +63,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-export const SCHEMA_VERSION = "72"; // Rebuild caches written at 71 with the reverted-then-wrong overpaid-debt sign. Do not go back to 70 — localhost may already have 71.
+export const SCHEMA_VERSION = "73"; // Core spend excludes Investments & Savings and Asset purchase (isNotSpending).
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -100,7 +100,7 @@ export interface MonthlyHistoryEntry {
   yearMonth: string;
   /** Raw total of all expense transactions (no transfers filter) */
   expensesTotal: number;
-  /** Core expenses = expensesTotal minus transfers, interest, and Card Servicing (see isCoreExcluded) */
+  /** Core expenses = expensesTotal minus transfers, interest, Card Servicing, Investments & Savings, and Asset purchase (see isNotSpending / isCoreExcluded) */
   coreExpensesTotal: number;
   /** Total income for this month — excludes transfers, Transfer In, Other (see isExcludedFromCoreIncomeTotal). */
   incomeTotal: number;

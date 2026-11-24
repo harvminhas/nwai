@@ -31,7 +31,7 @@
 
 import type { MonthlyHistoryEntry, AccountBalanceHistory } from "./financialProfile";
 import type { ExpenseTxnRecord } from "./extractTransactions";
-import { isCoreExcluded } from "./spendingMetrics";
+import { isTransferInterestOrCardServicing } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
 
 /**
@@ -304,7 +304,7 @@ export function computeAssetGains(
   const contributions = expenseTxns
     .filter(t => 
       t.txMonth === currentMonth &&
-      !isCoreExcluded(t.category) &&
+      !isTransferInterestOrCardServicing(t.category) &&
       getParentCategory(t.category) === "Investments & Savings"
     )
     .reduce((sum, t) => sum + Math.abs(t.amount), 0);
@@ -447,7 +447,7 @@ export function computeMonthlySavings(
   
   for (const t of expenseTxns) {
     if (t.txMonth !== currentMonth) continue;
-    if (isCoreExcluded(t.category)) continue;
+    if (isTransferInterestOrCardServicing(t.category)) continue;
     
     const parent = getParentCategory(t.category);
     if (parent !== "Investments & Savings") continue;

@@ -13,8 +13,11 @@ import { merchantSlug } from "@/lib/applyRules";
 import { matchingMerchantName } from "@/lib/merchantAliases";
 import {
   categoryColor, CategoryPicker, RecurringIcon,
+  persistCategoryChange,
   type CashFrequency,
+  type CategorySelectMeta,
   getParentCategory,
+  defaultApplyToMerchant,
 } from "@/app/account/spending/shared";
 import { MerchantDrawer, useMerchantDrawer } from "@/app/account/spending/MerchantDrawer";
 import { fmt, getCurrencySymbol, formatCurrency } from "@/lib/currencyUtils";
@@ -69,6 +72,9 @@ interface ExpenseTxn {
   amount: number;
   category: string;
   accountLabel?: string;
+  accountSlug?: string;
+  fingerprint?: string;
+  stmtId?: string;
   date?: string;
   isCashCommitment?: boolean;
   currency?: string;
@@ -382,25 +388,45 @@ export default function SpendingCategoryPage() {
 
   // ── handlers ────────────────────────────────────────────────────────────────
 
-  async function handleCategoryChange(txn: ExpenseTxn, newCategory: string) {
+  async function handleCategoryChange(txn: ExpenseTxn, newCategory: string, meta?: CategorySelectMeta) {
     setOpenPicker(null);
+    const applyToMerchant = meta?.applyToMerchant ?? defaultApplyToMerchant(newCategory);
+    const matchesThis = (t: ExpenseTxn) =>
+      applyToMerchant
+        ? matchingMerchantName(t) === matchingMerchantName(txn)
+        : t.date === txn.date && t.amount === txn.amount && matchingMerchantName(t) === matchingMerchantName(txn);
     setAllMonthsData((prev) => {
       const next = new Map<string, ExpenseTxn[]>();
       for (const [ym, txns] of prev) {
-        next.set(ym, txns.map((t) => matchingMerchantName(t) === matchingMerchantName(txn) ? { ...t, category: newCategory } : t));
+        next.set(ym, txns.map((t) => matchesThis(t) ? { ...t, category: newCategory } : t));
       }
       return next;
     });
-    setTransactions((prev) => prev.map((t) => matchingMerchantName(t) === matchingMerchantName(txn) ? { ...t, category: newCategory } : t));
-    try {
-      const res = await fetch("/api/user/category-rules", {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant: matchingMerchantName(txn), category: newCategory }),
-      });
-      if (res.ok) { setToast(`Rule saved: "${txn.merchant}" → ${newCategory}`); requestProfileRefresh(); }
-      else setToast("Failed to save rule");
-    } catch { setToast("Failed to save rule"); }
+    setTransactions((prev) => prev.map((t) => matchesThis(t) ? { ...t, category: newCategory } : t));
+    if (!token) return;
+    const result = await persistCategoryChange({
+      token,
+      category: newCategory,
+      merchant: matchingMerchantName(txn),
+      applyToMerchant,
+      amount: txn.amount,
+      date: txn.date,
+      stmtId: txn.stmtId,
+      accountSlug: txn.accountSlug,
+      fingerprint: txn.fingerprint,
+      linkAssetId: meta?.linkAssetId,
+      linkAmount: meta?.linkAmount,
+    });
+    if (result.ok) {
+      setToast(result.error
+        ? result.error
+        : applyToMerchant
+          ? `Rule saved: "${txn.merchant}" → ${newCategory}`
+          : `This transaction → ${newCategory}`);
+      requestProfileRefresh();
+    } else {
+      setToast(result.error ?? "Failed to save");
+    }
   }
 
   function handleRecurringToggle(txn: ExpenseTxn, anchorEl: HTMLElement) {
@@ -589,7 +615,8 @@ export default function SpendingCategoryPage() {
                   <CategoryPicker
                     anchorRef={{ current: btnRefs.current.get(pickerKey)! }}
                     current={txn.category}
-                    onSelect={(cat) => handleCategoryChange(txn, cat)}
+                    authToken={token}
+                    onSelect={(cat, meta) => handleCategoryChange(txn, cat, meta)}
                     onClose={() => setOpenPicker(null)}
                   />
                 )}

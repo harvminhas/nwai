@@ -75,6 +75,11 @@ export type MonthlyCashFlow = {
   moneyOut: number;
   leftover: number;
   savingsRate: number | null;
+  /** Asset purchases + Investments & Savings. Not money out, not leftover. */
+  intoAssets: number;
+  /** leftover − intoAssets — cash remaining after asset moves. */
+  cashAfterAssetMoves: number;
+  intoAssetsLines: Array<{ name: string; amount: number }>;
   buckets: MonthlyCashFlowBuckets;
   categories: MonthlyCashFlowCategory[];
   sources: MonthlyCashFlowSource[];
@@ -87,6 +92,8 @@ export type AveragedCashFlow = {
   moneyOut: number;
   leftover: number;
   savingsRate: number | null;
+  intoAssets: number;
+  cashAfterAssetMoves: number;
   buckets: MonthlyCashFlowBuckets;
 };
 
@@ -95,6 +102,8 @@ export type LeftoverMonthBreakdown = {
   moneyIn: number;
   moneyOut: number;
   leftover: number;
+  intoAssets: number;
+  cashAfterAssetMoves: number;
   buckets: MonthlyCashFlowBuckets;
 };
 
@@ -154,6 +163,9 @@ function emptyMonth(yearMonth: string): MonthlyCashFlow {
     moneyOut: 0,
     leftover: 0,
     savingsRate: null,
+    intoAssets: 0,
+    cashAfterAssetMoves: 0,
+    intoAssetsLines: [],
     buckets: { fixed: 0, essentials: 0, flexible: 0 },
     categories: [],
     sources: [],
@@ -211,12 +223,20 @@ function composeMonth(
 ): MonthlyCashFlow {
   const moneyIn = income?.total ?? 0;
   const moneyOut = spending.total;
+  const leftover = moneyIn - moneyOut;
+  const intoAssets = spending.intoAssets;
   return {
     yearMonth,
     moneyIn,
     moneyOut,
-    leftover: moneyIn - moneyOut,
+    leftover,
     savingsRate: computeSavingsRate(moneyIn, moneyOut),
+    intoAssets,
+    cashAfterAssetMoves: leftover - intoAssets,
+    intoAssetsLines: spending.intoAssetsLines.map((line) => ({
+      name: line.category,
+      amount: line.amount,
+    })),
     buckets: {
       fixed: spending.fixed,
       essentials: spending.essentials,
@@ -325,17 +345,22 @@ export function averageMonthlyCashFlow(months: MonthlyCashFlow[]): AveragedCashF
       moneyOut: 0,
       leftover: 0,
       savingsRate: null,
+      intoAssets: 0,
+      cashAfterAssetMoves: 0,
       buckets: { fixed: 0, essentials: 0, flexible: 0 },
     };
   }
   const moneyIn = mean(months.map((m) => m.moneyIn));
   const moneyOut = mean(months.map((m) => m.moneyOut));
   const leftover = mean(months.map((m) => m.leftover));
+  const intoAssets = mean(months.map((m) => m.intoAssets));
   return {
     moneyIn,
     moneyOut,
     leftover,
     savingsRate: computeSavingsRate(moneyIn, moneyOut),
+    intoAssets,
+    cashAfterAssetMoves: leftover - intoAssets,
     buckets: {
       fixed: mean(months.map((m) => m.buckets.fixed)),
       essentials: mean(months.map((m) => m.buckets.essentials)),
@@ -350,6 +375,8 @@ function toBreakdown(month: MonthlyCashFlow): LeftoverMonthBreakdown {
     moneyIn: month.moneyIn,
     moneyOut: month.moneyOut,
     leftover: month.leftover,
+    intoAssets: month.intoAssets,
+    cashAfterAssetMoves: month.cashAfterAssetMoves,
     buckets: month.buckets,
   };
 }

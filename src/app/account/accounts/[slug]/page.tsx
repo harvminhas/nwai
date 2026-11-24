@@ -13,7 +13,13 @@ import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { findAccountHistoryLabel, resolveAccountDisplayName } from "@/lib/accountListLabel";
 import CsvImportPanel from "@/components/CsvImportPanel";
 import type { PaymentFrequency } from "@/app/api/user/account-rates/route";
-import { CategoryPicker, categoryColor } from "@/app/account/spending/shared";
+import {
+  CategoryPicker,
+  categoryColor,
+  persistCategoryChange,
+  defaultApplyToMerchant,
+  type CategorySelectMeta,
+} from "@/app/account/spending/shared";
 import { useProfileRefresh } from "@/contexts/ProfileRefreshContext";
 import CashflowHeatmap from "@/components/CashflowHeatmap";
 import AccountSwitcher from "@/components/AccountSwitcher";
@@ -1007,10 +1013,11 @@ export default function AccountDetailPage() {
 
   // ── transaction recategorization ──────────────────────────────────────────
 
-  async function handleCategoryChange(txnIndex: number, newCategory: string) {
+  async function handleCategoryChange(txnIndex: number, newCategory: string, meta?: CategorySelectMeta) {
     const txn = txns[txnIndex];
     if (!txn || !idToken) return;
     setOpenPicker(null);
+    const applyToMerchant = meta?.applyToMerchant ?? defaultApplyToMerchant(newCategory);
     // Optimistic update
     setTxData((prev) => {
       if (!prev) return prev;
@@ -1021,20 +1028,29 @@ export default function AccountDetailPage() {
         ),
       };
     });
-    try {
-      const res = await fetch("/api/user/category-rules", {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ merchant: matchingMerchantName(txn), category: newCategory }),
-      });
-      if (res.ok) {
-        showToast(`Rule saved: "${txn.merchant}" → ${newCategory}`, true);
-        requestProfileRefresh();
-      } else {
-        showToast("Failed to save rule", false);
-      }
-    } catch {
-      showToast("Failed to save rule", false);
+    const result = await persistCategoryChange({
+      token: idToken,
+      category: newCategory,
+      merchant: matchingMerchantName(txn),
+      applyToMerchant,
+      amount: txn.amount,
+      date: txn.date,
+      stmtId: txn.stmtId,
+      accountSlug: txn.accountSlug ?? slug,
+      fingerprint: (txn as ExpenseTransaction & { fingerprint?: string }).fingerprint,
+      linkAssetId: meta?.linkAssetId,
+      linkAmount: meta?.linkAmount,
+    });
+    if (result.ok) {
+      showToast(
+        applyToMerchant
+          ? `Rule saved: "${txn.merchant}" → ${newCategory}`
+          : `This transaction → ${newCategory}`,
+        true,
+      );
+      requestProfileRefresh();
+    } else {
+      showToast(result.error ?? "Failed to save", false);
     }
   }
 
@@ -2284,7 +2300,8 @@ export default function AccountDetailPage() {
                               <CategoryPicker
                                 anchorRef={{ current: pickerBtnRefs.current.get(i)! }}
                                 current={txn.category}
-                                onSelect={(cat) => handleCategoryChange(i, cat)}
+                                authToken={idToken}
+                                onSelect={(cat, meta) => handleCategoryChange(i, cat, meta)}
                                 onClose={() => setOpenPicker(null)}
                               />
                             )}

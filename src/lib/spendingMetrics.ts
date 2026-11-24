@@ -2,9 +2,13 @@
  * Canonical definitions for "typical monthly spending".
  *
  * CORE_EXCLUDE_RE matches transfers + interest only (category/parent string test).
- * Debt servicing uses {@link isCoreExcluded}: **Card Servicing** (revolving settlement)
- * is excluded from core totals; **Installment Servicing** is included — avoids double-counting
- * card purchases while keeping mortgage/auto/student installment cash visible.
+ * Debt servicing uses {@link isNotSpending} / {@link isCoreExcluded}: **Card Servicing**
+ * (revolving settlement) is excluded from core totals; **Installment Servicing** is
+ * included — avoids double-counting card purchases while keeping mortgage/auto/student
+ * installment cash visible.
+ *
+ * Non-spending groups (Investments & Savings, Asset purchase) are also excluded so
+ * the dashboard headline, typical month, chat, Spending page, and cash flow agree.
  *
  * Rule: if you change exclusion logic you change what "Typical Month" means everywhere.
  */
@@ -29,10 +33,23 @@ export type CoreExcludeOpts = {
 };
 
 /**
- * Returns true when a transaction should be excluded from core spending totals.
- * Uses parent category for transfers; debt servicing uses installment vs card routing.
+ * True for Investments & Savings and Asset purchase (parent or subtype).
+ * Stocks/crypto stay under Investments & Savings — they are not Asset purchase.
  */
-export function isCoreExcluded(category: string, opts?: CoreExcludeOpts): boolean {
+export function isNonSpendingGroup(category: string): boolean {
+  const parent = getParentCategory(category);
+  return parent === "Investments & Savings" || parent === "Asset purchase";
+}
+
+/**
+ * Transfers, interest, and Card Servicing — the original core-exclude set,
+ * without non-spending groups. Used when those groups still need to be
+ * collected for "Into assets" display.
+ */
+export function isTransferInterestOrCardServicing(
+  category: string,
+  opts?: CoreExcludeOpts,
+): boolean {
   const catTrim = category.trim();
   const parent = getParentCategory(catTrim);
 
@@ -49,6 +66,27 @@ export function isCoreExcluded(category: string, opts?: CoreExcludeOpts): boolea
     opts?.forAggregateLabel === true,
   );
   return kind === "card";
+}
+
+/**
+ * Single exclusion for "is this spending?". Covers everything
+ * {@link isTransferInterestOrCardServicing} covers PLUS non-spending groups
+ * (Asset purchase and Investments & Savings).
+ *
+ * {@link isCoreExcluded} and {@link computeMonthlyBuckets} both call this so
+ * dashboard headline, typical month, chat/insights, Spending, and cash flow
+ * use the same month numbers.
+ */
+export function isNotSpending(category: string, opts?: CoreExcludeOpts): boolean {
+  return isTransferInterestOrCardServicing(category, opts) || isNonSpendingGroup(category);
+}
+
+/**
+ * Returns true when a transaction should be excluded from core spending totals.
+ * Delegates to {@link isNotSpending} — one exclusion function everywhere.
+ */
+export function isCoreExcluded(category: string, opts?: CoreExcludeOpts): boolean {
+  return isNotSpending(category, opts);
 }
 
 /**

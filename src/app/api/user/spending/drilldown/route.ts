@@ -100,6 +100,8 @@ interface DrilldownResponse {
   groups?: DebtGroup[];
   oneOffTotal?: number;
   oneOffLabel?: string;
+  /** Asset purchases + Investments & Savings — not counted as spending. */
+  movedIntoAssets?: { total: number; lines: Array<{ category: string; amount: number }> };
 }
 
 // Helper to compute actual debt payments split by loan/card/oneOff
@@ -464,6 +466,19 @@ export async function GET(req: NextRequest) {
       // Sort by total after Debt override/insertion
       rankedItems.sort((a, b) => b.total - a.total);
 
+      const intoAssetsByLabel = new Map<string, number>();
+      for (const month of summary.monthlyHistory) {
+        if (!windowMonths.includes(month.yearMonth)) continue;
+        if (isMonthInProgress(month.yearMonth, currentYm)) continue;
+        for (const line of month.intoAssetsLines) {
+          intoAssetsByLabel.set(line.category, (intoAssetsByLabel.get(line.category) ?? 0) + line.amount);
+        }
+      }
+      const movedIntoAssetsLines = Array.from(intoAssetsByLabel.entries())
+        .map(([category, amount]) => ({ category, amount }))
+        .sort((a, b) => b.amount - a.amount);
+      const movedIntoAssetsTotal = movedIntoAssetsLines.reduce((s, l) => s + l.amount, 0);
+
       return NextResponse.json({
         level: "all",
         breadcrumb: [{ label: "All spending" }],
@@ -472,6 +487,9 @@ export async function GET(req: NextRequest) {
         monthlySeries: adjustedAllSeries,
         rankedItems,
         currency: profile.homeCurrency,
+        ...(movedIntoAssetsTotal > 0.005
+          ? { movedIntoAssets: { total: movedIntoAssetsTotal, lines: movedIntoAssetsLines } }
+          : {}),
       });
     } else if (level === "category") {
       // Level 2: Category → Merchants

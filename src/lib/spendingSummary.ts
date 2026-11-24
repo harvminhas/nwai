@@ -59,6 +59,9 @@ export interface MonthlySpendingSummary {
   fixed: number;
   essentials: number;
   flexible: number;
+  /** Asset purchases + Investments & Savings — not spending. */
+  intoAssets: number;
+  intoAssetsLines: Array<{ category: string; amount: number }>;
   categories: Array<{ category: string; amount: number; bucket: MoneyCoachBucket }>;
   isInProgress?: boolean;
 }
@@ -185,6 +188,8 @@ export function spendingForMonth(
     fixed: result.buckets.fixed,
     essentials: result.buckets.essentials,
     flexible: result.buckets.flexible,
+    intoAssets: result.intoAssets,
+    intoAssetsLines: result.intoAssetsLines,
     categories: result.items.map((item) => ({
       category: item.category,
       amount: item.amount,

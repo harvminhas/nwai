@@ -125,6 +125,30 @@ export function CashFlowView({
         </div>
       </div>
 
+      {(view.selected?.intoAssets ?? 0) > 0.005 && (
+        <div className={CASH_FLOW_METRICS_GRID_CLASS}>
+          <MetricCard label="Into assets" value={money(view.selected?.intoAssets ?? 0)} />
+          <div className={CASH_FLOW_METRIC_CARD_CLASS}>
+            <p className={CASH_FLOW_METRIC_LABEL_CLASS}>Cash after asset moves</p>
+            <IntactAmount
+              className={`${CASH_FLOW_METRIC_VALUE_CLASS} ${getSignColor(view.selected?.cashAfterAssetMoves ?? 0)}`}
+            >
+              {money(view.selected?.cashAfterAssetMoves ?? 0)}
+            </IntactAmount>
+            {(view.selected?.intoAssetsLines?.length ?? 0) > 0 && (
+              <ul className="mt-2 space-y-1">
+                {view.selected!.intoAssetsLines.map((line) => (
+                  <li key={line.name} className="flex items-start justify-between gap-2 text-xs text-gray-500">
+                    <span className="min-w-0 break-words">{line.name}</span>
+                    <span className="shrink-0 tabular-nums">{money(line.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className={CASH_FLOW_CARD_CLASS}>
         <h2 className="mb-1 text-lg font-semibold text-gray-900">Month by month</h2>
         <p className={`${CASH_FLOW_NOTE_CLASS} mb-4`}>Tap a month to see the details below.</p>

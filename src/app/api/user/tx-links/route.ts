@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { resolveAccess } from "@/lib/access/resolveAccess";
 import type { TransactionLinks, HubLink } from "@/lib/types";
+import { txFingerprint } from "@/lib/txFingerprint";
 
 export async function GET(req: NextRequest) {
   const { db } = getFirebaseAdmin();
@@ -31,14 +32,23 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json() as {
-      fingerprint: string;
+      fingerprint?: string;
+      accountSlug?: string;
+      date?: string;
+      txnAmount?: number;
+      merchant?: string;
       hubId: string;
       role: string;
       amount?: number;
     };
 
-    if (!body.fingerprint || !body.hubId || !body.role) {
-      return NextResponse.json({ error: "fingerprint, hubId, and role are required" }, { status: 400 });
+    const fingerprint = body.fingerprint
+      || (body.accountSlug && body.date && body.merchant != null && body.txnAmount != null
+        ? txFingerprint(body.accountSlug, body.date, body.txnAmount, body.merchant)
+        : "");
+
+    if (!fingerprint || !body.hubId || !body.role) {
+      return NextResponse.json({ error: "fingerprint (or accountSlug+date+amount+merchant), hubId, and role are required" }, { status: 400 });
     }
 
     const validRoles = ["finances", "secures", "funds", "spend_on", "grouped_under", "income_from"];
@@ -51,7 +61,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Only 'funds' role can have partial amount" }, { status: 400 });
     }
 
-    const ref = db.doc(`users/${targetUid}/txLinks/${body.fingerprint}`);
+    const ref = db.doc(`users/${targetUid}/txLinks/${fingerprint}`);
     const now = new Date().toISOString();
 
     const snap = await ref.get();
@@ -75,7 +85,7 @@ export async function POST(req: NextRequest) {
     }
 
     const updated: TransactionLinks = {
-      txFingerprint: body.fingerprint,
+      txFingerprint: fingerprint,
       links: [...links, newLink],
       updatedAt: now,
     };

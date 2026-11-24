@@ -4,8 +4,13 @@
  * TO ADD A NEW SUBTYPE:  add it to the array under its parent in CATEGORY_TAXONOMY.
  * TO ADD A NEW PARENT:   add a key to CATEGORY_TAXONOMY (empty array = no subtypes)
  *                        and add it to PARENT_CATEGORIES.
- * Changes here automatically propagate to: CategoryPicker, AI prompt,
- * CSV parser, spending page rollup, and {@link isCoreExcluded} routing.
+ * Changes here automatically propagate to: CategoryPicker, spending page
+ * rollup, and {@link isCoreExcluded} routing.
+ *
+ * User-only parents (see {@link USER_ONLY_PARENTS}) appear in the picker
+ * but are stripped from {@link buildCategoryPromptLines} and
+ * {@link PARSER_CATEGORY_VALUES} so the AI parse prompt and CSV parser
+ * never suggest them.
  */
 
 // ── Parent categories (canonical, displayed in picker and charts) ─────────────
@@ -27,6 +32,7 @@ export const PARENT_CATEGORIES = [
   "Debt",
   "Insurance",
   "Investments & Savings",
+  "Asset purchase",
   "Transfers",
   "Transfer Out",
   "Transfers & Payments",
@@ -65,6 +71,7 @@ export const CATEGORY_TAXONOMY: Record<ParentCategory, readonly string[]> = {
     // General (either country)
     "Stocks & ETFs", "Mutual Funds", "GICs & Bonds", "Crypto", "Emergency Fund",
   ],
+  "Asset purchase":       ["Vehicle", "Home & property", "Business investment", "Other asset"],
   Transfers:              ["Transfer In", "Incoming Transfer"],
   "Transfer Out":         [],
   "Transfers & Payments": [],
@@ -122,6 +129,13 @@ export const CATEGORY_COLORS: Record<string, string> = {
   "gics & bonds":           "#065f46",
   crypto:                   "#0d9488",
   "emergency fund":         "#14b8a6",
+
+  "asset purchase":         "#4f46e5",
+  vehicle:                  "#4f46e5",
+  "home & property":        "#6366f1",
+  "business investment":    "#4338ca",
+  "other asset":            "#818cf8",
+
   transfers:                "#06b6d4",
   "transfer out":           "#06b6d4",
   "transfers & payments":   "#06b6d4",
@@ -425,6 +439,39 @@ export const PARENTS_WITH_SUBTYPES = new Set(
     .map(([p]) => p.toLowerCase())
 );
 
+/**
+ * Parents the user may tag in the picker that the AI parse prompt and CSV
+ * parser must never suggest. Stocks/crypto stay in Investments & Savings.
+ */
+export const USER_ONLY_PARENTS: readonly ParentCategory[] = ["Asset purchase"];
+
+const USER_ONLY_PARENT_SET = new Set<string>(
+  USER_ONLY_PARENTS.map((p) => p.toLowerCase()),
+);
+
+/** True when `cat` is the Asset purchase parent or one of its subtypes. */
+export function isAssetPurchaseCategory(cat: string): boolean {
+  return getParentCategory(cat) === "Asset purchase";
+}
+
+/**
+ * Default recategorize scope. Asset purchase is a one-off tag — apply to
+ * this transaction only unless the user opts into a merchant rule.
+ */
+export function defaultApplyToMerchant(category: string): boolean {
+  return !isAssetPurchaseCategory(category);
+}
+
+function isUserOnlyParent(parent: ParentCategory): boolean {
+  return USER_ONLY_PARENT_SET.has(parent.toLowerCase());
+}
+
+/** Taxonomy entries fed to the AI prompt and CSV parser (excludes user-only parents). */
+export function taxonomyForParser(): Array<[ParentCategory, readonly string[]]> {
+  return (Object.entries(CATEGORY_TAXONOMY) as [ParentCategory, readonly string[]][])
+    .filter(([parent]) => !isUserOnlyParent(parent));
+}
+
 // ── Flat category list for pickers / AI prompt ────────────────────────────────
 // Parents listed first, then their subtypes indented.
 
@@ -439,15 +486,20 @@ export const PICKER_CATEGORIES: Array<{ value: string; parent: ParentCategory | 
 /** Flat list of all valid category strings (parents + subtypes). */
 export const ALL_CATEGORY_VALUES: readonly string[] = PICKER_CATEGORIES.map((c) => c.value);
 
+/** Parents + subtypes the AI parse prompt and CSV parser may assign. */
+export const PARSER_CATEGORY_VALUES: readonly string[] = taxonomyForParser().flatMap(
+  ([parent, subtypes]) => [parent, ...subtypes],
+);
+
 /**
  * Prompt-ready category list for the AI — compact format.
- * Returns a string like:
+ * Excludes user-only parents (Asset purchase). Returns a string like:
  *   Transportation (or subtype: Gas | Parking | Car Insurance | Transit | Rideshare | Auto Service)
  *   Dining (or subtype: Restaurants | Coffee & Drinks | Fast Food | Food Delivery)
  *   ...
  */
 export function buildCategoryPromptLines(): string {
-  return (Object.entries(CATEGORY_TAXONOMY) as [ParentCategory, readonly string[]][])
+  return taxonomyForParser()
     .map(([parent, subs]) =>
       subs.length > 0
         ? `  ${parent} (or subtype: ${subs.join(" | ")})`

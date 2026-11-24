@@ -220,7 +220,7 @@ If there are zero rows, skip the table and briefly say nothing matched.
 Do not mix the narrative and the table on the same line — narrative first, then ## Transactions, then the table, then ## Total.
 
 DEFINITIONS:
-- Core expenses = spending excluding Transfers, Interest, and Card Servicing (CC/LOC payments from checking). Installment Servicing (mortgage, auto, student, installment loans) counts in core.
+- Core expenses = spending excluding Transfers, Interest, Card Servicing (CC/LOC payments from checking), Investments & Savings, and Asset purchases. Installment Servicing (mortgage, auto, student, installment loans) counts in core.
 - Transfers = inter-account or e-transfers — excluded from core expense totals.
 - Debt: Installment Servicing vs Card Servicing — see category taxonomy (Debt parent).
 - Savings rate = (income − core expenses) / income × 100
