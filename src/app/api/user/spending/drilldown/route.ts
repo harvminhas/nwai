@@ -15,7 +15,8 @@ import { buildSpendingSummary } from "@/lib/spendingSummary";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { merchantSlug } from "@/lib/applyRules";
 import { resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
-import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { computeMonthSpending, isCoreExcluded } from "@/lib/spendingMetrics";
+import { toHome as toHomeCurrency } from "@/lib/currencyUtils";
 import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import { classifyDebtAccount } from "@/lib/debtPaymentKinds";
 import {
@@ -513,27 +514,43 @@ export async function GET(req: NextRequest) {
         // Use actualDebt computed once for entire request
         
         // Build loan account rows
-        const loanAccounts = actualDebt.accounts.filter(a => a.kind === "loan");
-        const loanItems: RankedItem[] = loanAccounts.map(account => {
-          const total = account.regularTotal;
+        // Loan rows come from the same installment transactions that make up the
+        // Debt total (computeMonthSpending lines), so rows sum to the header.
+        // Loan-statement "payments made" are not used here: they can differ from
+        // the cash that left the user's accounts and would not match the total.
+        const loanMap = new Map<string, { name: string; monthlySeries: MonthlySeries[]; count: number }>();
+        const fxOpts = { homeCurrency: profile.homeCurrency, fxRates: profile.fxRates || {} };
+        const debtTxns = windowMonths.flatMap((ym) =>
+          computeMonthSpending(ym, profile.expenseTxns, fxOpts)
+            .lines.filter((line) => getParentCategory(line.category) === "Debt")
+            .flatMap((line) => line.transactions as typeof profile.expenseTxns),
+        );
+        for (const t of debtTxns) {
+          const amount = Math.abs(toHomeCurrency(t.amount, t.currency, fxOpts));
+          if (amount <= 0) continue;
+          const { slug, name } = resolveSpendingMerchant(t.merchant, aliasResolver, renameCtx.displayNames);
+          let row = loanMap.get(slug);
+          if (!row) {
+            row = { name, monthlySeries: windowMonths.map((ym) => ({ yearMonth: ym, amount: 0 })), count: 0 };
+            loanMap.set(slug, row);
+          }
+          const idx = windowMonths.indexOf(t.txMonth);
+          row.monthlySeries[idx].amount += amount;
+          row.count += 1;
+        }
+        const loanItems: RankedItem[] = Array.from(loanMap.entries()).map(([slug, row]) => {
+          const total = row.monthlySeries.reduce((sum, m) => sum + m.amount, 0);
           const avg = total / completeCount;
-          const last3 = account.regularMonthlySeries.slice(-3);
+          const last3 = row.monthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
-          const trend = last3Avg - avg;
-
-          // SubLabel: regular amount per month plus payment count
-          const regularPerMonth = total / completeCount;
-          const subLabel = `usual payment - ${formatCurrency(regularPerMonth, profile.homeCurrency)}/mo - ${account.paymentCount} payment${account.paymentCount !== 1 ? 's' : ''}`;
-
           return {
-            name: account.accountName || account.accountSlug,
-            slug: account.accountSlug,
-            subLabel,
+            name: row.name,
+            slug,
+            subLabel: `${formatCurrency(avg, profile.homeCurrency)}/mo - ${row.count} payment${row.count !== 1 ? "s" : ""}`,
             total,
-            share: actualDebt.loanTotal > 0 ? total / actualDebt.loanTotal : 0,
-            trend,
-            monthlySeries: account.regularMonthlySeries,
-            extras: account.extras,
+            share: categoryTotal > 0 ? total / categoryTotal : 0,
+            trend: last3Avg - avg,
+            monthlySeries: row.monthlySeries,
             kind: "loan" as const,
           };
         }).sort((a, b) => b.total - a.total);
@@ -569,7 +586,7 @@ export async function GET(req: NextRequest) {
             key: "loans",
             label: "Loan payments",
             counted: true,
-            total: actualDebt.loanTotal,
+            total: categoryTotal,
             subLabel: "counted in spending",
             items: loanItems,
           },
