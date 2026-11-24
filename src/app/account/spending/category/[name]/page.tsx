@@ -387,11 +387,11 @@ export default function SpendingCategoryPage() {
     setAllMonthsData((prev) => {
       const next = new Map<string, ExpenseTxn[]>();
       for (const [ym, txns] of prev) {
-        next.set(ym, txns.map((t) => t.merchant === txn.merchant ? { ...t, category: newCategory } : t));
+        next.set(ym, txns.map((t) => matchingMerchantName(t) === matchingMerchantName(txn) ? { ...t, category: newCategory } : t));
       }
       return next;
     });
-    setTransactions((prev) => prev.map((t) => t.merchant === txn.merchant ? { ...t, category: newCategory } : t));
+    setTransactions((prev) => prev.map((t) => matchingMerchantName(t) === matchingMerchantName(txn) ? { ...t, category: newCategory } : t));
     try {
       const res = await fetch("/api/user/category-rules", {
         method: "PUT",
@@ -536,8 +536,11 @@ export default function SpendingCategoryPage() {
       )
     : 0;
   const merchantTotals = new Map<string, number>();
+  // Display name → statement descriptor, so the drawer opens the real merchant slug after a rename.
+  const rawForDisplayed = new Map<string, string>();
   for (const t of transactions) {
     merchantTotals.set(t.merchant, (merchantTotals.get(t.merchant) ?? 0) + t.amount);
+    if (!rawForDisplayed.has(t.merchant)) rawForDisplayed.set(t.merchant, matchingMerchantName(t));
   }
   const topMerchants = Array.from(merchantTotals.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const color = categoryColor(rawName);
@@ -735,8 +738,10 @@ export default function SpendingCategoryPage() {
               : [];
 
             const merchantMap = new Map<string, number>();
+            const stRawForDisplayed = new Map<string, string>();
             for (const t of visibleTxns) {
               merchantMap.set(t.merchant, (merchantMap.get(t.merchant) ?? 0) + t.amount);
+              if (!stRawForDisplayed.has(t.merchant)) stRawForDisplayed.set(t.merchant, matchingMerchantName(t));
             }
             const stTopMerchants = Array.from(merchantMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5);
             const visibleTotal   = visibleTxns.reduce((s, t) => s + t.amount, 0);
@@ -867,7 +872,7 @@ export default function SpendingCategoryPage() {
                               <div key={merchant}>
                                 <div className="flex items-center justify-between text-sm mb-0.5">
                                   <button
-                                    onClick={() => openDrawer(merchantSlug(merchant))}
+                                    onClick={() => openDrawer(merchantSlug(stRawForDisplayed.get(merchant) ?? merchant))}
                                     className="font-medium text-gray-700 truncate text-left hover:text-purple-600 hover:underline transition-colors"
                                   >
                                     {merchant}
@@ -1045,7 +1050,7 @@ export default function SpendingCategoryPage() {
                   <div key={merchant}>
                     <div className="flex items-center justify-between text-sm mb-1">
                       <button
-                        onClick={() => openDrawer(merchantSlug(merchant))}
+                        onClick={() => openDrawer(merchantSlug(rawForDisplayed.get(merchant) ?? merchant))}
                         className="font-medium text-gray-700 truncate text-left hover:text-purple-600 hover:underline transition-colors"
                       >
                         {merchant}
