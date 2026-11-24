@@ -21,7 +21,7 @@ import { computeMoneyCoachBreakdown } from "../moneyCoach";
 import { executeGetMonthlyBreakdown } from "../chat/executor";
 import type { FinancialProfileCache } from "../financialProfile";
 import { getCategoryBucket } from "../moneyCoachBuckets";
-import { buildDailySpend } from "../dailySpend";
+import { buildDailySpend, themeAmountsFromCategories, themeIdForCategory } from "../dailySpend";
 import type { UserReviewContext } from "../userReviewContext";
 
 const MONTH = "2026-10";
@@ -42,6 +42,10 @@ function expense(
 
 const expenses: ExpenseTxnRecord[] = [
   expense({ merchant: "Grocery store", category: "Groceries", amount: 100 }),
+  expense({ merchant: "Landlord", category: "Rent", amount: 1200 }),
+  expense({ merchant: "Hydro", category: "Utilities", amount: 150 }),
+  expense({ merchant: "Insurer", category: "Insurance", amount: 80 }),
+  expense({ merchant: "Streaming", category: "Subscriptions", amount: 15 }),
   expense({ merchant: "Mystery shop", category: "Other", amount: 40 }),
   expense({ merchant: "Bank fee", category: "Fees", amount: 15 }),
   expense({ merchant: "Interest charge", category: "Interest", amount: 25 }),
@@ -128,8 +132,9 @@ const debtPaymentHistory: DebtPaymentHistoryEntry[] = [
   },
 ];
 
-/** Groceries 100 + Other 40 + Fees 15 + installment payment 200 */
-const EXPECTED = 355;
+/** Groceries 100 + Rent 1200 + Utilities 150 + Insurance 80 + Subscriptions 15
+ *  + Other 40 + Fees 15 + installment payment 200 */
+const EXPECTED = 1800;
 
 const emptyReviews: UserReviewContext = {
   incomeDepositReviews: new Map(),
@@ -173,7 +178,17 @@ describe("spending inclusion rules", () => {
     expect(isNotSpending("Other")).toBe(false);
     expect(isNotSpending("Fees")).toBe(false);
     expect(isNotSpending("Bank Fees")).toBe(false);
+    expect(isNotSpending("Housing")).toBe(false);
+    expect(isNotSpending("Rent")).toBe(false);
+    expect(isNotSpending("Utilities")).toBe(false);
+    expect(isNotSpending("Insurance")).toBe(false);
+    expect(isNotSpending("Subscriptions")).toBe(false);
     expect(isNotSpending("Installment Servicing")).toBe(false);
+    expect(getCategoryBucket("Housing")).toBe("fixed");
+    expect(getCategoryBucket("Rent")).toBe("fixed");
+    expect(getCategoryBucket("Utilities")).toBe("fixed");
+    expect(getCategoryBucket("Subscriptions")).toBe("fixed");
+    expect(getCategoryBucket("Insurance")).toBe("fixed");
     expect(isNotSpending("Interest")).toBe(true);
     expect(isNotSpending("Transfers")).toBe(true);
     expect(isNotSpending("Card Servicing")).toBe(true);
@@ -241,13 +256,17 @@ describe("same month = same number everywhere", () => {
     emptyReviews,
   );
 
-  it("computeMonthSpending is Groceries + Other + Fees + the actual loan payment", () => {
+  it("computeMonthSpending is groceries, bills, Other, Fees, and the actual loan payment", () => {
     expect(monthSpend.total).toBe(EXPECTED);
     expect(monthSpend.lines.map((l) => l.category).sort()).toEqual([
       "Fees",
       "Groceries",
       "Installment Servicing",
+      "Insurance",
       "Other",
+      "Rent",
+      "Subscriptions",
+      "Utilities",
     ]);
     expect(monthSpend.lines.find((l) => l.category === "Installment Servicing")?.amount).toBe(200);
     expect(monthSpend.lines.some((l) => l.category === "Interest")).toBe(false);
@@ -275,10 +294,13 @@ describe("same month = same number everywhere", () => {
     expect(coach.totalSpending).toBe(EXPECTED);
     expect(chat.ok).toBe(true);
     const chatData = chat.data as { months: Array<{ expenses: string; by_category?: Array<{ category: string }> }> };
-    expect(String(chatData.months[0].expenses)).toMatch(/355/);
+    expect(String(chatData.months[0].expenses)).toMatch(/1[,.]?800/);
     const cats = new Set(chatData.months[0].by_category?.map((c) => c.category) ?? []);
     expect(cats.has("Other")).toBe(true);
     expect(cats.has("Fees")).toBe(true);
+    expect(cats.has("Rent")).toBe(true);
+    expect(cats.has("Insurance")).toBe(true);
+    expect(cats.has("Subscriptions")).toBe(true);
     expect(cats.has("Installment Servicing")).toBe(true);
     expect(cats.has("Interest")).toBe(false);
     expect(cats.has("Transfers")).toBe(false);
@@ -320,5 +342,15 @@ describe("daily spend", () => {
     );
     expect(spendingMonth.total).toBe(EXPECTED);
     expect(daily.hasData).toBe(true);
+    // Daily spend is the everyday-theme subset (Food / Getting around / Shopping /
+    // Fun / Personal care). Rent, insurance, subscriptions, and utilities are
+    // billed on the dashboard / Spending / cash flow, not in this per-day tool.
+    expect(themeIdForCategory("Rent")).toBeNull();
+    expect(themeIdForCategory("Insurance")).toBeNull();
+    expect(themeIdForCategory("Subscriptions")).toBeNull();
+    expect(themeIdForCategory("Utilities")).toBeNull();
+    const themes = themeAmountsFromCategories(spendingMonth.categories);
+    expect(themes.total).toBe(100);
+    expect(themes.food).toBe(100);
   });
 });

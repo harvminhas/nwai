@@ -7,7 +7,8 @@
  * spendingForMonth / computeMonthlyBuckets).
  *
  * What counts as spending:
- * - Everyday purchases, Other/uncategorized outflows, and bank Fees
+ * - Everyday purchases, rent/housing, insurance, subscriptions, utilities
+ * - Other/uncategorized outflows, and bank Fees
  * - Installment Servicing (the actual loan payment that left the account)
  *
  * What does not:
