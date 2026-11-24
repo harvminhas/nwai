@@ -644,12 +644,20 @@ function topMerchants(
   matches: (txn: ExpenseTxnRecord) => boolean,
 ): DailySpendMerchantRow[] {
   const monthSet = new Set(windowMonths);
-  const map = new Map<string, { name: string; total: number; count: number }>();
+  const map = new Map<string, { name: string; renamed: boolean; total: number; count: number }>();
   for (const txn of expenseTxns) {
     if (!monthSet.has(txn.txMonth)) continue;
     if (!matches(txn)) continue;
     const { slug, name } = resolveSpendingMerchant(txn.merchant, aliasResolver, displayNames);
-    const cur = map.get(slug) ?? { name, total: 0, count: 0 };
+    // Several statement slugs can share one canonical row (amazon-ca, amazon-com → amazon).
+    // A rename saved on any of them wins, whatever order the transactions arrive in.
+    const renamed =
+      displayNames != null && name !== resolveSpendingMerchant(txn.merchant, aliasResolver).name;
+    const cur = map.get(slug) ?? { name, renamed, total: 0, count: 0 };
+    if (renamed && !cur.renamed) {
+      cur.name = name;
+      cur.renamed = true;
+    }
     cur.total += Math.abs(txn.amount);
     cur.count += 1;
     map.set(slug, cur);

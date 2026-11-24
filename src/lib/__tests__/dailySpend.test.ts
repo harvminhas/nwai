@@ -576,6 +576,51 @@ describe("merchant totals match Spending grouping for the same window", () => {
   });
 });
 
+describe("merchant renames for merged and aliased merchants", () => {
+  function build(txns: ExpenseTxnRecord[], extra: Partial<Parameters<typeof buildDailySpend>[0]>) {
+    return buildDailySpend({
+      expenseTxns: txns,
+      accountSnapshots: snapshots as never,
+      debtPaymentHistory: [],
+      userReviews: [],
+      fxRates: {},
+      currency: "CAD",
+      range: "3m",
+      ...extra,
+    });
+  }
+
+  it("applies a rename saved on a merged merchant (source mapping) to all its aliases", () => {
+    const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
+      expense({ category: "Shopping", amount: 50, txMonth: ym, merchant: "GC 1176-cash Withdra" }),
+      expense({ category: "Shopping", amount: 30, txMonth: ym, merchant: "GC 1177-cash Withdra" }),
+    ]);
+    const result = build(txns, {
+      sourceMappings: [
+        { alias: "GC 1176-cash Withdra", canonical: "Honda Dealer", status: "confirmed", type: "expense" },
+        { alias: "GC 1177-cash Withdra", canonical: "Honda Dealer", status: "confirmed", type: "expense" },
+      ],
+      merchantDisplayNames: [{ slug: "honda-dealer", displayName: "Honda Downpayment" }],
+    });
+    const rows = result.themes.find((t) => t.id === "shopping")!.detail.merchants;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ slug: "honda-dealer", name: "Honda Downpayment", count: 6, total: 240 });
+  });
+
+  it("keeps a rename saved on one built-in alias slug regardless of transaction order", () => {
+    const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
+      expense({ category: "Shopping", amount: 20, txMonth: ym, merchant: "Amazon.com" }),
+      expense({ category: "Shopping", amount: 40, txMonth: ym, merchant: "Amazon.ca" }),
+    ]);
+    const result = build(txns, {
+      merchantDisplayNames: [{ slug: "amazon-ca", displayName: "Amazon (household)" }],
+    });
+    const rows = result.themes.find((t) => t.id === "shopping")!.detail.merchants;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ slug: "amazon", name: "Amazon (household)", total: 180 });
+  });
+});
+
 describe("visits per month", () => {
   it("rounds transaction count over the window divided by month count, singular at 1", () => {
     expect(visitsPerMonth(3, 3)).toBe(1);
