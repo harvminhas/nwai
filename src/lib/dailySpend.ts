@@ -1,9 +1,9 @@
 /**
- * Daily spend — everyday-theme mapping and daily-rate math.
+ * Daily spend — four-theme mapping and daily-rate math.
  *
- * Category amounts come from spendingForMonth → computeMonthSpending
- * (same function as the Spending page and dashboard headline). Subtypes roll up
- * via getParentCategory. Averages use monthsForCashFlowAverage (finished
+ * Theme totals use the same counted rows as {@link computeMonthSpending}
+ * (dashboard headline, Spending, cash flow). Subtypes roll up via
+ * getParentCategory. Averages use monthsForCashFlowAverage (finished
  * months only) and mean() from cashFlowAverage.ts.
  *
  * Daily rate = sum of theme spending over the window / calendar days in
@@ -21,7 +21,7 @@ import {
   IN_PROGRESS_LABEL,
 } from "./monthAnchor";
 import { formatMonth } from "./dateFormatting";
-import { spendingForMonth, type MonthlySpendingSummary } from "./spendingSummary";
+import { computeMonthSpending, type MonthSpending, type SpendingTxnLike } from "./spendingMetrics";
 import { spendingHrefForCategories } from "./spendingMultiCategory";
 import {
   buildMerchantAliasResolver,
@@ -34,10 +34,9 @@ export type DailySpendRange = "3m" | "6m" | "12m";
 
 export type DailySpendThemeId =
   | "food"
+  | "housing"
   | "getting-around"
-  | "shopping"
-  | "fun"
-  | "personal-care";
+  | "fun";
 
 export type FoodSplit = "groceries" | "eating-out";
 
@@ -56,44 +55,36 @@ export const TOP_MERCHANTS_HEADING = "Top 5 merchants";
 export const TOP_GROCERY_STORES_HEADING = "Top grocery stores";
 export const TOP_EAT_OUT_PLACES_HEADING = "Top places you eat out";
 
-const STREAMING_EXCLUSIONS = new Set(["streaming", "streaming services"]);
-const CAR_INSURANCE_EXCLUSIONS = new Set(["car insurance"]);
-
 export const DAILY_SPEND_THEMES: ReadonlyArray<{
   id: DailySpendThemeId;
   label: string;
   color: string;
 }> = [
-  { id: "food", label: "Food", color: "#22c55e" },
+  { id: "food", label: "Eating", color: "#22c55e" },
+  { id: "housing", label: "Housing", color: "#3b82f6" },
   { id: "getting-around", label: "Getting around", color: "#f59e0b" },
-  { id: "shopping", label: "Shopping", color: "#a855f7" },
-  { id: "fun", label: "Fun & going out", color: "#ec4899" },
-  { id: "personal-care", label: "Personal care", color: "#f472b6" },
+  { id: "fun", label: "Fun & entertainment", color: "#ec4899" },
 ];
 
 /** Every Spending-page parent a theme spans, for the “See {theme} in Spending” link. */
 export const THEME_SPENDING_CATEGORIES: Record<DailySpendThemeId, string[]> = {
   food: ["Groceries", "Dining"],
+  housing: ["Housing"],
   "getting-around": ["Transportation"],
-  shopping: ["Shopping"],
   fun: ["Entertainment"],
-  "personal-care": ["Personal Care"],
 };
 
-/** Where Spending's view includes a subtype Daily spend leaves out. */
-export const THEME_SPENDING_NOTE: Partial<Record<DailySpendThemeId, string>> = {
-  "getting-around": "Spending's Transportation view also includes Car Insurance, which isn't counted here.",
-  fun: "Spending's Entertainment view also includes Streaming, which isn't counted here.",
-};
+/** Plain-language list of what Daily spend includes (replaces the old “bills left out” note). */
+export const DAILY_SPEND_INCLUDED_NOTE =
+  "Eating (groceries and restaurants), housing bills (rent, utilities, home insurance), getting around, and fun & entertainment (including streaming).";
 
 export interface ThemeMonthAmounts {
   food: number;
   groceries: number;
   eatingOut: number;
+  housing: number;
   "getting-around": number;
-  shopping: number;
   fun: number;
-  "personal-care": number;
   total: number;
   /** Leaf / residual subcategory totals keyed by display label. */
   subcategories: Record<string, number>;
@@ -209,13 +200,17 @@ function emptyThemeAmounts(): ThemeMonthAmounts {
     food: 0,
     groceries: 0,
     eatingOut: 0,
+    housing: 0,
     "getting-around": 0,
-    shopping: 0,
     fun: 0,
-    "personal-care": 0,
     total: 0,
     subcategories: {},
   };
+}
+
+function taxonomySubtypeMatch(parent: keyof typeof CATEGORY_TAXONOMY, category: string): string | null {
+  const lower = category.trim().toLowerCase();
+  return (CATEGORY_TAXONOMY[parent] ?? []).find((s) => s.toLowerCase() === lower) ?? null;
 }
 
 export function parseDailySpendRange(raw: string | null | undefined): DailySpendRange {
@@ -289,38 +284,42 @@ export function rangeAverageLabel(range: DailySpendRange): string {
   return "3-MONTH AVERAGE";
 }
 
+export type ThemeCategoryOpts = {
+  /** Structured debt type from the statement — not a merchant name. */
+  debtType?: string;
+};
+
 /**
- * Map a Spending-page category (parent or subtype) to an everyday theme.
- * Exclusions: housing, subscriptions, insurance, taxes, debt/loan payments,
- * education, healthcare, travel, cash & ATM, fees, transfers, savings,
- * car insurance, streaming.
+ * Map a Spending-page category (parent or subtype) to a Daily spend theme.
+ * Uses {@link getParentCategory} and taxonomy subtypes — no merchant matching.
+ * Only rows that {@link computeMonthSpending} counts should be passed in.
  */
-export function themeIdForCategory(category: string): DailySpendThemeId | null {
+export function themeIdForCategory(
+  category: string,
+  opts?: ThemeCategoryOpts,
+): DailySpendThemeId | null {
   const parent = getParentCategory(category);
   const lower = category.trim().toLowerCase();
 
-  if (parent === "Transportation" && CAR_INSURANCE_EXCLUSIONS.has(lower)) {
-    return null;
+  if (parent === "Groceries" || parent === "Dining") return "food";
+  if (parent === "Housing") return "housing";
+  if (parent === "Transportation") return "getting-around";
+  if (parent === "Entertainment") return "fun";
+
+  if (parent === "Taxes" && taxonomySubtypeMatch("Taxes", category) === "Property Tax") {
+    return "housing";
   }
-  if (parent === "Entertainment" && STREAMING_EXCLUSIONS.has(lower)) {
-    return null;
+  if (parent === "Insurance" && taxonomySubtypeMatch("Insurance", category) === "Tenant Insurance") {
+    return "housing";
+  }
+  // Mortgage payments the parser tagged as Debt (alias "Mortgage Payment") —
+  // not auto/student installment servicing.
+  if (parent === "Debt" && lower.includes("mortgage")) return "housing";
+  if (parent === "Debt" && (opts?.debtType ?? "").toLowerCase().replace(/-/g, "_") === "mortgage") {
+    return "housing";
   }
 
-  switch (parent) {
-    case "Groceries":
-    case "Dining":
-      return "food";
-    case "Transportation":
-      return "getting-around";
-    case "Shopping":
-      return "shopping";
-    case "Entertainment":
-      return "fun";
-    case "Personal Care":
-      return "personal-care";
-    default:
-      return null;
-  }
+  return null;
 }
 
 export function foodSplitForCategory(category: string): FoodSplit | null {
@@ -332,14 +331,20 @@ export function foodSplitForCategory(category: string): FoodSplit | null {
  * Display label for a theme leaf: taxonomy subtype, Groceries, or the parent
  * residual (e.g. untyped "Dining" or "Transportation").
  */
-export function subcategoryLabelForCategory(category: string): string | null {
-  if (!themeIdForCategory(category)) return null;
+export function subcategoryLabelForCategory(
+  category: string,
+  opts?: ThemeCategoryOpts,
+): string | null {
+  if (!themeIdForCategory(category, opts)) return null;
   const parent = getParentCategory(category);
   const lower = category.trim().toLowerCase();
   const subtypes = CATEGORY_TAXONOMY[parent] ?? [];
   const match = subtypes.find((s) => s.toLowerCase() === lower);
   if (match) return match;
   if (parent === "Groceries") return "Groceries";
+  if (themeIdForCategory(category, opts) === "housing" && parent === "Debt") {
+    return "Mortgage";
+  }
   return parent;
 }
 
@@ -347,18 +352,16 @@ function taxonomyLabelsForTheme(themeId: DailySpendThemeId): string[] {
   switch (themeId) {
     case "food":
       return ["Groceries", ...CATEGORY_TAXONOMY.Dining];
+    case "housing":
+      return [
+        ...CATEGORY_TAXONOMY.Housing,
+        ...CATEGORY_TAXONOMY.Taxes.filter((s) => s === "Property Tax"),
+        ...CATEGORY_TAXONOMY.Insurance.filter((s) => s === "Tenant Insurance"),
+      ];
     case "getting-around":
-      return CATEGORY_TAXONOMY.Transportation.filter(
-        (s) => !CAR_INSURANCE_EXCLUSIONS.has(s.toLowerCase()),
-      );
-    case "shopping":
-      return [...CATEGORY_TAXONOMY.Shopping];
+      return [...CATEGORY_TAXONOMY.Transportation];
     case "fun":
-      return CATEGORY_TAXONOMY.Entertainment.filter(
-        (s) => !STREAMING_EXCLUSIONS.has(s.toLowerCase()),
-      );
-    case "personal-care":
-      return [...CATEGORY_TAXONOMY["Personal Care"]];
+      return [...CATEGORY_TAXONOMY.Entertainment];
   }
 }
 
@@ -366,14 +369,12 @@ function residualParentForTheme(themeId: DailySpendThemeId): string | null {
   switch (themeId) {
     case "food":
       return "Dining";
+    case "housing":
+      return "Housing";
     case "getting-around":
       return "Transportation";
-    case "shopping":
-      return "Shopping";
     case "fun":
       return "Entertainment";
-    case "personal-care":
-      return "Personal Care";
   }
 }
 
@@ -458,26 +459,62 @@ function foldParentLeftoverIntoGeneric(
   ];
 }
 
+function addThemeAmount(
+  amounts: ThemeMonthAmounts,
+  category: string,
+  amount: number,
+  opts?: ThemeCategoryOpts,
+): void {
+  const theme = themeIdForCategory(category, opts);
+  if (!theme) return;
+  amounts[theme] += amount;
+  amounts.total += amount;
+  const sub = subcategoryLabelForCategory(category, opts);
+  if (sub) {
+    amounts.subcategories[sub] = (amounts.subcategories[sub] ?? 0) + amount;
+  }
+  if (theme === "food") {
+    const split = foodSplitForCategory(category);
+    if (split === "groceries") amounts.groceries += amount;
+    else amounts.eatingOut += amount;
+  }
+}
+
 export function themeAmountsFromCategories(
   categories: Array<{ category: string; amount: number }>,
 ): ThemeMonthAmounts {
   const amounts = emptyThemeAmounts();
   for (const cat of categories) {
-    const theme = themeIdForCategory(cat.category);
-    if (!theme) continue;
-    amounts[theme] += cat.amount;
-    amounts.total += cat.amount;
-    const sub = subcategoryLabelForCategory(cat.category);
-    if (sub) {
-      amounts.subcategories[sub] = (amounts.subcategories[sub] ?? 0) + cat.amount;
-    }
-    if (theme === "food") {
-      const split = foodSplitForCategory(cat.category);
-      if (split === "groceries") amounts.groceries += cat.amount;
-      else amounts.eatingOut += cat.amount;
+    addThemeAmount(amounts, cat.category, cat.amount);
+  }
+  return amounts;
+}
+
+/** Theme totals from the same counted rows {@link computeMonthSpending} returns. */
+export function themeAmountsFromSpending(spending: MonthSpending): ThemeMonthAmounts {
+  const amounts = emptyThemeAmounts();
+  for (const line of spending.lines) {
+    if (line.transactions.length > 0) {
+      for (const txn of line.transactions) {
+        addThemeAmount(amounts, txn.category ?? line.category, spendingAmountOf(txn, line), {
+          debtType: txn.debtType,
+        });
+      }
+    } else {
+      addThemeAmount(amounts, line.category, line.amount);
     }
   }
   return amounts;
+}
+
+function spendingAmountOf(
+  txn: SpendingTxnLike,
+  line: MonthSpending["lines"][number],
+): number {
+  const lineTotal = line.transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+  if (lineTotal <= 0) return 0;
+  // Preserve FX-converted line.amount; split across the counted rows.
+  return (Math.abs(txn.amount) / lineTotal) * line.amount;
 }
 
 /** Calendar days in a YYYY-MM month. */
@@ -676,39 +713,65 @@ function topMerchants(
     .slice(0, TOP_MERCHANT_COUNT);
 }
 
+function countedThemeTxns(
+  spendingFor: (yearMonth: string) => MonthSpending,
+  windowMonths: string[],
+  matches: (txn: SpendingTxnLike) => boolean,
+): ExpenseTxnRecord[] {
+  const rows: ExpenseTxnRecord[] = [];
+  for (const ym of windowMonths) {
+    for (const line of spendingFor(ym).lines) {
+      for (const txn of line.transactions) {
+        if (matches(txn)) rows.push(txn as ExpenseTxnRecord);
+      }
+    }
+  }
+  return rows;
+}
+
 function merchantsForTheme(
   themeId: DailySpendThemeId,
-  expenseTxns: ExpenseTxnRecord[],
+  spendingFor: (yearMonth: string) => MonthSpending,
   windowMonths: string[],
   calendarDays: number,
   aliasResolver: MerchantAliasResolver | null,
   displayNames: ReadonlyMap<string, string> | null,
 ): DailySpendMerchantRow[] {
+  const txns = countedThemeTxns(
+    spendingFor,
+    windowMonths,
+    (txn) => themeIdForCategory(txn.category ?? "", { debtType: txn.debtType }) === themeId,
+  );
   return topMerchants(
-    expenseTxns,
+    txns,
     windowMonths,
     calendarDays,
     aliasResolver,
     displayNames,
-    (txn) => themeIdForCategory(txn.category) === themeId,
+    () => true,
   );
 }
 
 function merchantsForFoodSplit(
   split: FoodSplit,
-  expenseTxns: ExpenseTxnRecord[],
+  spendingFor: (yearMonth: string) => MonthSpending,
   windowMonths: string[],
   calendarDays: number,
   aliasResolver: MerchantAliasResolver | null,
   displayNames: ReadonlyMap<string, string> | null,
 ): DailySpendMerchantRow[] {
+  const txns = countedThemeTxns(
+    spendingFor,
+    windowMonths,
+    (txn) => foodSplitForCategory(txn.category ?? "") === split,
+  );
   return topMerchants(
-    expenseTxns,
+    txns,
     windowMonths,
     calendarDays,
     aliasResolver,
     displayNames,
-    (txn) => foodSplitForCategory(txn.category) === split,
+    () => true,
   );
 }
 
@@ -743,7 +806,7 @@ function buildThemeDetail(
   dailyRate: number,
   groceriesDaily: number | undefined,
   eatingOutDaily: number | undefined,
-  expenseTxns: ExpenseTxnRecord[],
+  spendingFor: (yearMonth: string) => MonthSpending,
   amountsFor: (yearMonth: string) => ThemeMonthAmounts,
   currentYm: string,
   daysElapsed: number,
@@ -801,7 +864,7 @@ function buildThemeDetail(
       ),
       groceryMerchants: merchantsForFoodSplit(
         "groceries",
-        expenseTxns,
+        spendingFor,
         windowMonths,
         calendarDays,
         aliasResolver,
@@ -809,7 +872,7 @@ function buildThemeDetail(
       ),
       eatingOutMerchants: merchantsForFoodSplit(
         "eating-out",
-        expenseTxns,
+        spendingFor,
         windowMonths,
         calendarDays,
         aliasResolver,
@@ -823,7 +886,7 @@ function buildThemeDetail(
     foodSplit,
     merchants: merchantsForTheme(
       themeId,
-      expenseTxns,
+      spendingFor,
       windowMonths,
       calendarDays,
       aliasResolver,
@@ -831,7 +894,6 @@ function buildThemeDetail(
     ),
     series: seriesForTheme(themeId, amountsFor, currentYm, daysElapsed, firstDataMonth),
     spendingHref: spendingHrefForTheme(themeId),
-    ...(THEME_SPENDING_NOTE[themeId] ? { spendingNote: THEME_SPENDING_NOTE[themeId] } : {}),
   };
 }
 
@@ -860,25 +922,20 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
   });
   const priorMonths = priorWindowMonths(completeMonths, windowMonths);
 
-  const monthCache = new Map<string, MonthlySpendingSummary>();
-  const monthSummary = (yearMonth: string): MonthlySpendingSummary => {
+  const monthCache = new Map<string, MonthSpending>();
+  const spendingFor = (yearMonth: string): MonthSpending => {
     const cached = monthCache.get(yearMonth);
     if (cached) return cached;
-    const summary = spendingForMonth(
-      yearMonth,
-      input.expenseTxns,
-      input.accountSnapshots,
-      input.debtPaymentHistory,
-      input.userReviews,
-      input.fxRates,
-      currency,
-    );
+    const summary = computeMonthSpending(yearMonth, input.expenseTxns, {
+      homeCurrency: currency,
+      fxRates: input.fxRates,
+    });
     monthCache.set(yearMonth, summary);
     return summary;
   };
 
   const amountsFor = (yearMonth: string): ThemeMonthAmounts =>
-    themeAmountsFromCategories(monthSummary(yearMonth).categories);
+    themeAmountsFromSpending(spendingFor(yearMonth));
 
   const windowAmounts = windowMonths.map(amountsFor);
   const priorAmounts = priorMonths.map(amountsFor);
@@ -946,7 +1003,7 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
         dailyRate,
         groceriesDaily,
         eatingOutDaily,
-        input.expenseTxns,
+        spendingFor,
         amountsFor,
         currentYm,
         daysElapsed,

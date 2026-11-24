@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExpenseTxnRecord } from "../extractTransactions";
 import { getParentCategory } from "../categoryTaxonomy";
 import { spendingForMonth } from "../spendingSummary";
+import { computeMonthSpending } from "../spendingMetrics";
 import { buildMerchantAliasResolver, resolveSpendingMerchant } from "../merchantAliases";
 import {
   buildDailySpend,
@@ -24,7 +25,9 @@ import {
   priorWindowMonths,
   spendingHrefForTheme,
   themeAmountsFromCategories,
+  themeAmountsFromSpending,
   themeIdForCategory,
+  DAILY_SPEND_THEMES,
   visitsPerMonth,
   visitsPerMonthLabel,
   yearlyKeep,
@@ -70,7 +73,7 @@ afterEach(() => {
 });
 
 describe("theme mapping", () => {
-  it("maps Food as Groceries plus Dining subtypes", () => {
+  it("maps Eating as Groceries plus Dining subtypes", () => {
     expect(themeIdForCategory("Groceries")).toBe("food");
     expect(foodSplitForCategory("Groceries")).toBe("groceries");
     for (const dining of ["Dining", "Restaurants", "Coffee & Drinks", "Fast Food", "Food Delivery"]) {
@@ -79,47 +82,52 @@ describe("theme mapping", () => {
     }
   });
 
-  it("maps Getting around to Transportation subtypes except Car Insurance", () => {
-    for (const cat of ["Transportation", "Gas", "Parking", "Transit", "Rideshare", "Auto Service"]) {
-      expect(themeIdForCategory(cat)).toBe("getting-around");
-    }
-    expect(themeIdForCategory("Car Insurance")).toBeNull();
-  });
-
-  it("maps Shopping and its subtypes", () => {
-    for (const cat of ["Shopping", "Clothing", "Electronics", "Home & Garden", "Online Shopping"]) {
-      expect(themeIdForCategory(cat)).toBe("shopping");
-    }
-  });
-
-  it("maps Fun & going out to Entertainment excluding Streaming", () => {
-    for (const cat of ["Entertainment", "Movies & Events", "Sports", "Hobbies"]) {
-      expect(themeIdForCategory(cat)).toBe("fun");
-    }
-    expect(themeIdForCategory("Streaming")).toBeNull();
-    expect(themeIdForCategory("streaming services")).toBeNull();
-  });
-
-  it("maps Personal care and subtypes", () => {
+  it("maps Housing from the Housing parent plus property tax and tenant insurance", () => {
     for (const cat of [
-      "Personal Care",
-      "Spa",
-      "Salon & Haircare",
-      "Massage",
-      "Skincare & Beauty",
-      "Barber",
-      "Nail Care",
-    ]) {
-      expect(themeIdForCategory(cat)).toBe("personal-care");
-    }
-  });
-
-  it("excludes bills, transfers, savings, and other non-everyday categories", () => {
-    const excluded = [
       "Housing",
       "Rent",
       "Mortgage",
       "Utilities",
+      "Internet & Phone",
+      "Home Insurance",
+      "Condo Fees",
+      "Maintenance & Repairs",
+      "Property Tax",
+      "Tenant Insurance",
+    ]) {
+      expect(themeIdForCategory(cat)).toBe("housing");
+    }
+    expect(themeIdForCategory("Mortgage Payment")).toBe("housing");
+    expect(themeIdForCategory("Installment Servicing", { debtType: "mortgage" })).toBe("housing");
+    expect(themeIdForCategory("Installment Servicing", { debtType: "auto_loan" })).toBeNull();
+  });
+
+  it("maps Getting around to all Transportation subtypes, including Car Insurance", () => {
+    for (const cat of [
+      "Transportation",
+      "Gas",
+      "Parking",
+      "Transit",
+      "Rideshare",
+      "Auto Service",
+      "Car Insurance",
+    ]) {
+      expect(themeIdForCategory(cat)).toBe("getting-around");
+    }
+  });
+
+  it("maps Fun & entertainment to Entertainment including Streaming", () => {
+    for (const cat of ["Entertainment", "Movies & Events", "Sports", "Hobbies", "Streaming", "streaming services"]) {
+      expect(themeIdForCategory(cat)).toBe("fun");
+    }
+  });
+
+  it("does not map Shopping, Personal care, or non-theme spending categories", () => {
+    const excluded = [
+      "Shopping",
+      "Clothing",
+      "Personal Care",
+      "Barber",
       "Subscriptions",
       "Software",
       "Insurance",
@@ -129,30 +137,62 @@ describe("theme mapping", () => {
       "Debt",
       "Installment Servicing",
       "Card Servicing",
-      "Loan payments",
       "Education",
-      "Tuition",
       "Healthcare",
-      "Pharmacy",
       "Travel",
-      "Flights",
       "Cash & ATM",
       "Fees",
-      "Bank Fees",
       "Transfers",
-      "Transfer Out",
-      "Transfers & Payments",
       "Investments & Savings",
-      "CA: RRSP",
       "Asset purchase",
-      "Vehicle",
-      "Home & property",
       "Interest",
       "Other",
     ];
     for (const cat of excluded) {
       expect(themeIdForCategory(cat)).toBeNull();
     }
+  });
+
+  it("counts a mortgage installment once in Housing and leaves auto loans out", () => {
+    expect(DAILY_SPEND_THEMES.map((t) => t.id)).toEqual([
+      "food",
+      "housing",
+      "getting-around",
+      "fun",
+    ]);
+    const txns = [
+      expense({ category: "Rent", amount: 1200, txMonth: "2026-10" }),
+      expense({
+        category: "Installment Servicing",
+        amount: 450,
+        txMonth: "2026-10",
+        debtType: "mortgage",
+        date: "2026-10-03",
+        accountSlug: "chequing",
+        merchant: "Mortgage",
+      }),
+      expense({
+        category: "Installment Servicing",
+        amount: 450,
+        txMonth: "2026-10",
+        debtType: "mortgage",
+        date: "2026-10-05",
+        accountSlug: "mortgage-1",
+        merchant: "Payment received",
+      }),
+      expense({
+        category: "Installment Servicing",
+        amount: 300,
+        txMonth: "2026-10",
+        debtType: "auto_loan",
+        merchant: "Auto loan",
+      }),
+    ];
+    const spending = computeMonthSpending("2026-10", txns);
+    expect(spending.total).toBe(1950);
+    const themes = themeAmountsFromSpending(spending);
+    expect(themes.housing).toBe(1650);
+    expect(themes.total).toBe(1650);
   });
 });
 
@@ -186,11 +226,14 @@ describe("daily-rate math over calendar days", () => {
     const result = spend(txns);
     expect(result.months).toEqual(["2026-08", "2026-09", "2026-10"]);
     expect(result.calendarDays).toBe(92);
-    expect(result.everydayDailyRate).toBeCloseTo(920 / 92, 10);
+    expect(result.everydayDailyRate).toBeCloseTo((920 + 2000 + 150 + 18) / 92, 10);
     const food = result.themes.find((t) => t.id === "food");
     expect(food?.dailyRate).toBeCloseTo(920 / 92, 10);
     expect(food?.groceriesDaily).toBeCloseTo(920 / 92, 10);
     expect(food?.eatingOutDaily).toBe(0);
+    expect(result.themes.find((t) => t.id === "housing")?.dailyRate).toBeCloseTo(2000 / 92, 10);
+    expect(result.themes.find((t) => t.id === "getting-around")?.dailyRate).toBeCloseTo(150 / 92, 10);
+    expect(result.themes.find((t) => t.id === "fun")?.dailyRate).toBeCloseTo(18 / 92, 10);
   });
 });
 
@@ -221,7 +264,7 @@ describe("current month is excluded from the average", () => {
   it("flags no everyday spend this month instead of a CA$0/day rate", () => {
     const txns = [
       expense({ category: "Groceries", amount: 310, txMonth: "2026-10" }),
-      expense({ category: "Rent", amount: 2000, txMonth: "2026-11" }),
+      expense({ category: "Transfers", amount: 2000, txMonth: "2026-11" }),
     ];
     const result = spend(txns);
     expect(result.currentMonth).toMatchObject({
@@ -249,12 +292,12 @@ describe("prior-window delta", () => {
     ).toEqual(["2026-05", "2026-06", "2026-07"]);
 
     const txns = [
-      expense({ category: "Shopping", amount: 310, txMonth: "2026-05" }),
-      expense({ category: "Shopping", amount: 300, txMonth: "2026-06" }),
-      expense({ category: "Shopping", amount: 310, txMonth: "2026-07" }),
-      expense({ category: "Shopping", amount: 620, txMonth: "2026-08" }),
-      expense({ category: "Shopping", amount: 600, txMonth: "2026-09" }),
-      expense({ category: "Shopping", amount: 620, txMonth: "2026-10" }),
+      expense({ category: "Groceries", amount: 310, txMonth: "2026-05" }),
+      expense({ category: "Groceries", amount: 300, txMonth: "2026-06" }),
+      expense({ category: "Groceries", amount: 310, txMonth: "2026-07" }),
+      expense({ category: "Groceries", amount: 620, txMonth: "2026-08" }),
+      expense({ category: "Groceries", amount: 600, txMonth: "2026-09" }),
+      expense({ category: "Groceries", amount: 620, txMonth: "2026-10" }),
     ];
     const result = spend(txns);
     expect(result.priorMonths).toEqual(["2026-05", "2026-06", "2026-07"]);
@@ -307,18 +350,10 @@ describe("theme monthly total matches the Spending summary", () => {
     const themes = themeAmountsFromCategories(spending.categories);
     expect(themes.food).toBe((rolled.get("Groceries") ?? 0) + (rolled.get("Dining") ?? 0));
     expect(themes.food).toBe(155);
-    expect(themes.shopping).toBe(rolled.get("Shopping") ?? 0);
-    expect(themes["personal-care"]).toBe(rolled.get("Personal Care") ?? 0);
-
-    const carInsurance = spending.categories
-      .filter((c) => c.category.trim().toLowerCase() === "car insurance")
-      .reduce((sum, c) => sum + c.amount, 0);
-    expect(themes["getting-around"]).toBe((rolled.get("Transportation") ?? 0) - carInsurance);
-
-    const streaming = spending.categories
-      .filter((c) => c.category.trim().toLowerCase() === "streaming")
-      .reduce((sum, c) => sum + c.amount, 0);
-    expect(themes.fun).toBe((rolled.get("Entertainment") ?? 0) - streaming);
+    expect(themes.housing).toBe(rolled.get("Housing") ?? 0);
+    expect(themes.housing).toBe(2000);
+    expect(themes["getting-around"]).toBe(rolled.get("Transportation") ?? 0);
+    expect(themes.fun).toBe(rolled.get("Entertainment") ?? 0);
 
     const result = spend([
       ...txns,
@@ -338,7 +373,7 @@ describe("6-month and 12-month windows", () => {
     const txns = [
       "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06",
       "2026-07", "2026-08", "2026-09", "2026-10", "2026-11",
-    ].flatMap((ym) => [expense({ category: "Shopping", amount: 100, txMonth: ym })]);
+    ].flatMap((ym) => [expense({ category: "Groceries", amount: 100, txMonth: ym })]);
     const six = spend(txns, "6m");
     expect(six.months).toEqual(["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"]);
     expect(six.priorMonths).toEqual(["2026-01", "2026-02", "2026-03", "2026-04"]);
@@ -403,7 +438,7 @@ describe("theme subcategory daily rates sum to the theme", () => {
     expect(restaurants?.dailyRate).toBeCloseTo((93 + 90 + 93 + 15 + 15 + 15) / 92, 10);
   });
 
-  it("sums Getting around subtypes (excluding car insurance) to the theme", () => {
+  it("sums Getting around subtypes including car insurance to the theme", () => {
     const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
       expense({ category: "Gas", amount: 80, txMonth: ym }),
       expense({ category: "Parking", amount: 20, txMonth: ym }),
@@ -414,8 +449,8 @@ describe("theme subcategory daily rates sum to the theme", () => {
     expect(around).toBeTruthy();
     const sum = around!.detail.subcategories.reduce((s, bar) => s + bar.dailyRate, 0);
     expect(sum).toBeCloseTo(around!.dailyRate, 10);
-    expect(around!.dailyRate).toBeCloseTo((80 + 20 + 10) * 3 / 92, 10);
-    expect(around!.detail.subcategories.map((b) => b.label)).not.toContain("Car Insurance");
+    expect(around!.dailyRate).toBeCloseTo((80 + 20 + 10 + 150) * 3 / 92, 10);
+    expect(around!.detail.subcategories.map((b) => b.label)).toContain("Car Insurance");
     expect(around!.detail.subcategories.map((b) => b.label)).not.toContain("Transportation");
     expect(around!.detail.subcategories.map((b) => b.label)).toContain("Other Getting around");
     const leftover = around!.detail.subcategories.find((b) => b.label === "Other Getting around");
@@ -425,12 +460,10 @@ describe("theme subcategory daily rates sum to the theme", () => {
   it("folds parent-only Dining leftover into Restaurants & dining, Other <theme> otherwise", () => {
     const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
       expense({ category: "Dining", amount: 45, txMonth: ym }),
-      expense({ category: "Shopping", amount: 20, txMonth: ym }),
-      expense({ category: "Clothing", amount: 40, txMonth: ym }),
+      expense({ category: "Housing", amount: 20, txMonth: ym }),
+      expense({ category: "Rent", amount: 40, txMonth: ym }),
       expense({ category: "Entertainment", amount: 15, txMonth: ym }),
       expense({ category: "Hobbies", amount: 25, txMonth: ym }),
-      expense({ category: "Personal Care", amount: 12, txMonth: ym }),
-      expense({ category: "Barber", amount: 30, txMonth: ym }),
     ]);
     const result = spend(txns);
     const byId = Object.fromEntries(result.themes.map((t) => [t.id, t]));
@@ -445,23 +478,17 @@ describe("theme subcategory daily rates sum to the theme", () => {
     const foodLeafSum = byId.food.detail.subcategories.reduce((s, b) => s + b.dailyRate, 0);
     expect(foodLeafSum).toBeCloseTo(byId.food.dailyRate, 10);
 
-    const shoppingLabels = byId.shopping.detail.subcategories.map((b) => b.label);
-    expect(shoppingLabels).toContain("Other Shopping");
-    expect(shoppingLabels).not.toContain("Shopping");
-    const shoppingSum = byId.shopping.detail.subcategories.reduce((s, b) => s + b.dailyRate, 0);
-    expect(shoppingSum).toBeCloseTo(byId.shopping.dailyRate, 10);
+    const housingLabels = byId.housing.detail.subcategories.map((b) => b.label);
+    expect(housingLabels).toContain("Other Housing");
+    expect(housingLabels).not.toContain("Housing");
+    const housingSum = byId.housing.detail.subcategories.reduce((s, b) => s + b.dailyRate, 0);
+    expect(housingSum).toBeCloseTo(byId.housing.dailyRate, 10);
 
     const funLabels = byId.fun.detail.subcategories.map((b) => b.label);
-    expect(funLabels).toContain("Other Fun & going out");
+    expect(funLabels).toContain("Other Fun & entertainment");
     expect(funLabels).not.toContain("Entertainment");
     const funSum = byId.fun.detail.subcategories.reduce((s, b) => s + b.dailyRate, 0);
     expect(funSum).toBeCloseTo(byId.fun.dailyRate, 10);
-
-    const careLabels = byId["personal-care"].detail.subcategories.map((b) => b.label);
-    expect(careLabels).toContain("Other Personal care");
-    expect(careLabels).not.toContain("Personal Care");
-    const careSum = byId["personal-care"].detail.subcategories.reduce((s, b) => s + b.dailyRate, 0);
-    expect(careSum).toBeCloseTo(byId["personal-care"].dailyRate, 10);
   });
 });
 
@@ -552,7 +579,7 @@ describe("merchant totals match Spending grouping for the same window", () => {
     const { slug, name: statementName } = resolveSpendingMerchant(raw);
     expect(statementName).not.toBe("Honda Downpayment");
     const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
-      expense({ category: "Shopping", amount: 80, txMonth: ym, merchant: raw }),
+      expense({ category: "Gas", amount: 80, txMonth: ym, merchant: raw }),
       expense({ category: "Groceries", amount: 40, txMonth: ym, merchant: raw }),
     ]);
     const result = buildDailySpend({
@@ -565,8 +592,8 @@ describe("merchant totals match Spending grouping for the same window", () => {
       range: "3m",
       merchantDisplayNames: [{ slug, displayName: "Honda Downpayment" }],
     });
-    const shopping = result.themes.find((t) => t.id === "shopping")!;
-    const renamed = shopping.detail.merchants.find((m) => m.slug === slug);
+    const around = result.themes.find((t) => t.id === "getting-around")!;
+    const renamed = around.detail.merchants.find((m) => m.slug === slug);
     expect(renamed).toBeTruthy();
     expect(renamed!.name).toBe("Honda Downpayment");
     expect(renamed!.name).not.toBe(raw);
@@ -595,8 +622,8 @@ describe("merchant renames for merged and aliased merchants", () => {
 
   it("applies a rename saved on a merged merchant (source mapping) to all its aliases", () => {
     const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
-      expense({ category: "Shopping", amount: 50, txMonth: ym, merchant: "GC 1176-cash Withdra" }),
-      expense({ category: "Shopping", amount: 30, txMonth: ym, merchant: "GC 1177-cash Withdra" }),
+      expense({ category: "Gas", amount: 50, txMonth: ym, merchant: "GC 1176-cash Withdra" }),
+      expense({ category: "Gas", amount: 30, txMonth: ym, merchant: "GC 1177-cash Withdra" }),
     ]);
     const result = build(txns, {
       sourceMappings: [
@@ -605,20 +632,20 @@ describe("merchant renames for merged and aliased merchants", () => {
       ],
       merchantDisplayNames: [{ slug: "honda-dealer", displayName: "Honda Downpayment" }],
     });
-    const rows = result.themes.find((t) => t.id === "shopping")!.detail.merchants;
+    const rows = result.themes.find((t) => t.id === "getting-around")!.detail.merchants;
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ slug: "honda-dealer", name: "Honda Downpayment", count: 6, total: 240 });
   });
 
   it("keeps a rename saved on one built-in alias slug regardless of transaction order", () => {
     const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
-      expense({ category: "Shopping", amount: 20, txMonth: ym, merchant: "Amazon.com" }),
-      expense({ category: "Shopping", amount: 40, txMonth: ym, merchant: "Amazon.ca" }),
+      expense({ category: "Gas", amount: 20, txMonth: ym, merchant: "Amazon.com" }),
+      expense({ category: "Gas", amount: 40, txMonth: ym, merchant: "Amazon.ca" }),
     ]);
     const result = build(txns, {
       merchantDisplayNames: [{ slug: "amazon-ca", displayName: "Amazon (household)" }],
     });
-    const rows = result.themes.find((t) => t.id === "shopping")!.detail.merchants;
+    const rows = result.themes.find((t) => t.id === "getting-around")!.detail.merchants;
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ slug: "amazon", name: "Amazon (household)", total: 180 });
   });
@@ -654,12 +681,12 @@ describe("6-month series excludes the current month from the average", () => {
     ]);
     const txns = [
       "2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11",
-    ].map((ym) => expense({ category: "Shopping", amount: ym === "2026-11" ? 2300 : 304, txMonth: ym }));
+    ].map((ym) => expense({ category: "Groceries", amount: ym === "2026-11" ? 2300 : 304, txMonth: ym }));
     const result = spend(txns, "3m");
     expect(result.months).toEqual(["2026-08", "2026-09", "2026-10"]);
     expect(result.months).not.toContain("2026-11");
-    const shopping = result.themes.find((t) => t.id === "shopping")!;
-    const series = shopping.detail.series;
+    const food = result.themes.find((t) => t.id === "food")!;
+    const series = food.detail.series;
     expect(series.map((p) => p.yearMonth)).toEqual([
       "2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11",
     ]);
@@ -667,7 +694,7 @@ describe("6-month series excludes the current month from the average", () => {
     expect(nov.isInProgress).toBe(true);
     expect(nov.dailyRate).toBeCloseTo(2300 / 23, 10);
     expect(series.filter((p) => !p.isInProgress).every((p) => p.yearMonth !== "2026-11")).toBe(true);
-    expect(shopping.dailyRate).toBeCloseTo((304 * 3) / 92, 10);
+    expect(food.dailyRate).toBeCloseTo((304 * 3) / 92, 10);
     const oct = series.find((p) => p.yearMonth === "2026-10")!;
     expect(oct.isInProgress).toBe(false);
     expect(oct.dailyRate).toBeCloseTo(304 / 31, 10);
@@ -677,10 +704,10 @@ describe("6-month series excludes the current month from the average", () => {
 describe("6-month series starts at the first month with data", () => {
   it("leaves months before the user's first data off the line instead of plotting $0", () => {
     const txns = ["2026-09", "2026-10", "2026-11"].map((ym) =>
-      expense({ category: "Shopping", amount: 300, txMonth: ym }),
+      expense({ category: "Groceries", amount: 300, txMonth: ym }),
     );
-    const shopping = spend(txns).themes.find((t) => t.id === "shopping")!;
-    expect(shopping.detail.series.map((p) => p.yearMonth)).toEqual([
+    const food = spend(txns).themes.find((t) => t.id === "food")!;
+    expect(food.detail.series.map((p) => p.yearMonth)).toEqual([
       "2026-09", "2026-10", "2026-11",
     ]);
     expect(spend([]).themes[0].detail.series).toEqual([]);
@@ -690,15 +717,16 @@ describe("6-month series starts at the first month with data", () => {
 describe("spending deep-link", () => {
   it("links to the Spending page category query the drilldown already supports", () => {
     expect(spendingHrefForTheme("food")).toBe("/account/spending?category=Groceries,Dining");
-    expect(spendingHrefForTheme("personal-care")).toBe("/account/spending?category=Personal%20Care");
+    expect(spendingHrefForTheme("housing")).toBe("/account/spending?category=Housing");
     const result = spend([expense({ category: "Gas", amount: 100, txMonth: "2026-10" })]);
     const byId = Object.fromEntries(result.themes.map((t) => [t.id, t.detail]));
-    expect(byId["getting-around"].spendingNote).toMatch(/Car Insurance/);
-    expect(byId.fun.spendingNote).toMatch(/Streaming/);
+    expect(byId["getting-around"].spendingNote).toBeUndefined();
+    expect(byId.fun.spendingNote).toBeUndefined();
     expect(byId.food.spendingNote).toBeUndefined();
     expect(spendingHrefForTheme("getting-around")).toBe(
       "/account/spending?category=Transportation",
     );
+    expect(spendingHrefForTheme("fun")).toBe("/account/spending?category=Entertainment");
     expect(parseDailySpendTheme("food")).toBe("food");
     expect(parseDailySpendTheme("nope")).toBeNull();
   });

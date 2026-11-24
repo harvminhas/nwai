@@ -342,15 +342,13 @@ describe("daily spend", () => {
     );
     expect(spendingMonth.total).toBe(EXPECTED);
     expect(daily.hasData).toBe(true);
-    // Daily spend is the everyday-theme subset (Food / Getting around / Shopping /
-    // Fun / Personal care). Rent, insurance, subscriptions, and utilities are
-    // billed on the dashboard / Spending / cash flow, not in this per-day tool.
-    expect(themeIdForCategory("Rent")).toBeNull();
+    expect(themeIdForCategory("Rent")).toBe("housing");
+    expect(themeIdForCategory("Utilities")).toBe("housing");
     expect(themeIdForCategory("Insurance")).toBeNull();
     expect(themeIdForCategory("Subscriptions")).toBeNull();
-    expect(themeIdForCategory("Utilities")).toBeNull();
     const themes = themeAmountsFromCategories(spendingMonth.categories);
-    expect(themes.total).toBe(100);
     expect(themes.food).toBe(100);
+    expect(themes.housing).toBe(1350);
+    expect(themes.total).toBe(1450);
   });
 });

@@ -20,6 +20,7 @@ import type {
 } from "@/lib/dailySpend";
 import {
   DAILY_SPEND_RANGES,
+  DAILY_SPEND_INCLUDED_NOTE,
   DAILY_SPEND_THEMES,
   monthlyKeep,
   monthsSooner,
@@ -357,13 +358,8 @@ export default function DailySpendPage() {
                   </li>
                 ))}
               </ul>
-              {/* Everyday-theme total only (Food, Getting around, Shopping, Fun,
-                  Personal care). Full monthly spending — including rent, insurance,
-                  and subscriptions — lives in computeMonthSpending and is shown on
-                  the dashboard, Spending, and cash flow. Do not fold bills into
-                  this Daily spend figure without an explicit product decision. */}
               <p className="mt-3 text-xs text-gray-400">
-                Bills like rent, insurance and subscriptions are left out.
+                {DAILY_SPEND_INCLUDED_NOTE}
               </p>
             </div>
           </div>
