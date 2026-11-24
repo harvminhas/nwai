@@ -6,12 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { getFirebaseClient } from "@/lib/firebase";
 import { formatCurrency } from "@/lib/currencyUtils";
 import { IntactAmount } from "@/components/IntactAmount";
-import type { Plan } from "@/app/api/user/plans/route";
-import {
-  isPlanCompleted,
-  monthlySetAside,
-  todayISO,
-} from "@/app/account/tools/planner/planList";
+import { useConfirm } from "@/components/useConfirm";
 import type {
   DailySpendDeltaKind,
   DailySpendRange,
@@ -21,14 +16,17 @@ import type {
 import {
   DAILY_SPEND_RANGES,
   DAILY_SPEND_INCLUDED_NOTE,
-  DAILY_SPEND_THEMES,
   monthlyKeep,
-  monthsSooner,
-  fullySavedSoonerLabel,
   NO_SPEND_THIS_MONTH_MESSAGE,
   whatIfSliderBounds,
   yearlyKeep,
 } from "@/lib/dailySpend";
+import type { DailySpendTrackerView } from "@/lib/dailySpendTracker";
+import {
+  HOUSING_EXCLUDED_FROM_TARGET_NOTE,
+  TRACKED_DAILY_SPEND_THEMES,
+  usualFromDailySpend,
+} from "@/lib/dailySpendTracker";
 import {
   CARD_CLASS,
   COLUMNS_CLASS,
@@ -43,14 +41,18 @@ import {
   THEME_NAME_CLASS,
   THEME_ROW_CLASS,
   TITLE_CLASS,
+  TRACKER_ACTION_CLASS,
 } from "./dailySpendReadLayout";
 import { ThemeDetailModal } from "./ThemeDetailModal";
+import { TrackerCard } from "./TrackerCard";
 
 const RANGE_BUTTON_LABEL: Record<DailySpendRange, string> = {
   "3m": "3M",
   "6m": "6M",
   "12m": "12M",
 };
+
+type DailySpendPayload = DailySpendResult & { tracker: DailySpendTrackerView | null };
 
 function money(amount: number, currency: string): string {
   return formatCurrency(amount, currency, undefined, true);
@@ -60,19 +62,11 @@ function moneyPerDay(amount: number, currency: string): string {
   return `${money(amount, currency)}/day`;
 }
 
-function planProgress(plan: Plan): number {
-  return (
-    plan.linkedTransactions.reduce((sum, tx) => sum + tx.amount, 0) +
-    plan.cashEntries.reduce((sum, entry) => sum + entry.amount, 0)
-  );
-}
-
-function upcomingPlans(plans: Plan[], today: string): Plan[] {
-  return plans.filter((plan) => {
-    if (isPlanCompleted(plan)) return false;
-    if (plan.startDate <= today) return false;
-    return monthlySetAside(plan, planProgress(plan), today) != null;
-  });
+function themesLine(): string {
+  const labels = TRACKED_DAILY_SPEND_THEMES.map((t) => t.label);
+  if (labels.length <= 1) return labels[0] ?? "";
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
 }
 
 function DeltaPill({
@@ -106,18 +100,14 @@ function DeltaPill({
 
 export default function DailySpendPage() {
   const router = useRouter();
+  const { confirm, ConfirmDialog } = useConfirm();
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<DailySpendRange>("3m");
-  const [data, setData] = useState<DailySpendResult | null>(null);
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [selectedThemeIds, setSelectedThemeIds] = useState<Set<DailySpendThemeId>>(
-    () => new Set(DAILY_SPEND_THEMES.map((t) => t.id)),
-  );
+  const [data, setData] = useState<DailySpendPayload | null>(null);
   const [targetDaily, setTargetDaily] = useState<number | null>(null);
-  const [planPickerOpen, setPlanPickerOpen] = useState(false);
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [openThemeId, setOpenThemeId] = useState<DailySpendThemeId | null>(null);
   const themeRowRefs = useRef<Partial<Record<DailySpendThemeId, HTMLButtonElement | null>>>({});
 
@@ -148,8 +138,8 @@ export default function DailySpendPage() {
           const body = await res.json().catch(() => ({}));
           throw new Error(typeof body.error === "string" ? body.error : "Failed to load daily spend");
         }
-        const json = (await res.json()) as DailySpendResult;
-        if (!abort.signal.aborted) setData(json);
+        const json = (await res.json()) as DailySpendPayload;
+        if (!abort.signal.aborted) setData({ ...json, tracker: json.tracker ?? null });
       } catch (err) {
         if (abort.signal.aborted) return;
         setError(err instanceof Error ? err.message : "Failed to load daily spend");
@@ -160,48 +150,86 @@ export default function DailySpendPage() {
     return () => abort.abort();
   }, [token, range]);
 
-  useEffect(() => {
-    if (!token) return;
-    (async () => {
-      try {
-        const res = await fetch("/api/user/plans", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) return;
-        const body = await res.json();
-        setPlans(body.items || []);
-      } catch {
-        // Plans are optional for the what-if card.
-      }
-    })();
-  }, [token]);
-
   const usualDaily = useMemo(() => {
     if (!data) return 0;
-    return data.themes
-      .filter((theme) => selectedThemeIds.has(theme.id))
-      .reduce((sum, theme) => sum + theme.dailyRate, 0);
-  }, [data, selectedThemeIds]);
+    return usualFromDailySpend(data).usualDaily;
+  }, [data]);
 
   useEffect(() => {
     if (!data) return;
-    setTargetDaily(usualDaily);
+    if (data.tracker) {
+      setTargetDaily(data.tracker.record.targetDaily);
+    } else {
+      setTargetDaily(usualDaily);
+    }
   }, [data, usualDaily]);
 
+  const savedTarget = data?.tracker?.record.targetDaily ?? null;
   const bounds = whatIfSliderBounds(usualDaily);
+  if (savedTarget != null) {
+    bounds.min = Math.min(bounds.min, savedTarget);
+    bounds.max = Math.max(bounds.max, savedTarget);
+  }
   const target = targetDaily ?? usualDaily;
   const keepMonthly = monthlyKeep(usualDaily, target);
   const keepYearly = yearlyKeep(usualDaily, target);
-  const today = todayISO();
-  const plansForWhatIf = upcomingPlans(plans, today);
-  const selectedPlan = plansForWhatIf.find((p) => p.id === selectedPlanId) ?? null;
-  const planSetAside = selectedPlan
-    ? monthlySetAside(selectedPlan, planProgress(selectedPlan), today)
-    : null;
-  const sooner =
-    selectedPlan && planSetAside != null
-      ? monthsSooner(selectedPlan.budget - planProgress(selectedPlan), planSetAside, keepMonthly)
-      : null;
+  const targetChanged =
+    savedTarget != null && Number.isFinite(savedTarget) && Math.abs(target - savedTarget) >= 0.25;
+
+  async function saveTarget() {
+    if (!token) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/user/daily-spend/tracker", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ targetDaily: target, range }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(typeof body.error === "string" ? body.error : "Failed to save target");
+      }
+      const body = (await res.json()) as { tracker: DailySpendTrackerView | null };
+      setData((prev) => (prev ? { ...prev, tracker: body.tracker } : prev));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save target");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function stopTracking() {
+    if (!token) return;
+    const ok = await confirm({
+      title: "Stop tracking?",
+      message: "This clears your daily target and month-by-month results.",
+      confirmLabel: "Stop tracking",
+      variant: "danger",
+    });
+    if (!ok) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/user/daily-spend/tracker", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(typeof body.error === "string" ? body.error : "Failed to stop tracking");
+      }
+      setData((prev) => (prev ? { ...prev, tracker: null } : prev));
+      setTargetDaily(usualDaily);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to stop tracking");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   if (loading && !data) {
     return (
@@ -367,32 +395,9 @@ export default function DailySpendPage() {
           <div className={STACK_CLASS}>
             <div className={CARD_CLASS}>
               <h2 className="text-sm font-semibold text-gray-900">What if</h2>
-              <div className="mt-3 flex min-w-0 flex-wrap gap-2">
-                {DAILY_SPEND_THEMES.map((theme) => {
-                  const on = selectedThemeIds.has(theme.id);
-                  return (
-                    <button
-                      key={theme.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedThemeIds((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(theme.id)) next.delete(theme.id);
-                          else next.add(theme.id);
-                          return next;
-                        });
-                      }}
-                      className={`rounded-full border px-3 py-1 text-xs font-medium ${
-                        on
-                          ? "border-gray-900 bg-gray-900 text-white"
-                          : "border-gray-200 bg-white text-gray-600"
-                      }`}
-                    >
-                      {theme.label}
-                    </button>
-                  );
-                })}
-              </div>
+              <p className="mt-2 text-sm text-gray-600">
+                {themesLine()}. {HOUSING_EXCLUDED_FROM_TARGET_NOTE}
+              </p>
 
               <div className="mt-5">
                 <label htmlFor="daily-target" className="text-sm text-gray-600">
@@ -444,47 +449,41 @@ export default function DailySpendPage() {
                 </p>
               )}
 
-              {plansForWhatIf.length > 0 && (
-                <div className="mt-4">
+              {error && (
+                <p className="mt-3 text-sm text-red-600">{error}</p>
+              )}
+
+              {!data.tracker ? (
+                <button
+                  type="button"
+                  onClick={saveTarget}
+                  disabled={saving || usualDaily <= 0}
+                  className={`mt-4 ${TRACKER_ACTION_CLASS}`}
+                >
+                  Start tracking
+                </button>
+              ) : (
+                targetChanged && (
                   <button
                     type="button"
-                    onClick={() => {
-                      if (!planPickerOpen && !selectedPlanId && plansForWhatIf[0]) {
-                        setSelectedPlanId(plansForWhatIf[0].id);
-                      }
-                      setPlanPickerOpen((open) => !open);
-                    }}
-                    className="w-full rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50"
+                    onClick={saveTarget}
+                    disabled={saving}
+                    className={`mt-4 ${TRACKER_ACTION_CLASS}`}
                   >
-                    Put it toward a plan
+                    Update target
                   </button>
-                  {planPickerOpen && (
-                    <ul className="mt-2 min-w-0 divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200">
-                      {plansForWhatIf.map((plan) => (
-                        <li key={plan.id}>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPlanId(plan.id)}
-                            className={`block w-full min-w-0 break-words px-3 py-2 text-left text-sm ${
-                              selectedPlan?.id === plan.id
-                                ? "bg-violet-50 font-medium text-violet-800"
-                                : "text-gray-700 hover:bg-gray-50"
-                            }`}
-                          >
-                            {plan.name}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {selectedPlan && sooner != null && keepMonthly > 0 && (
-                    <p className="mt-3 text-sm text-gray-700">
-                      {fullySavedSoonerLabel(sooner)}
-                    </p>
-                  )}
-                </div>
+                )
               )}
             </div>
+
+            {data.tracker && (
+              <TrackerCard
+                view={data.tracker}
+                currency={currency}
+                onStop={stopTracking}
+                stopping={saving}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -499,6 +498,7 @@ export default function DailySpendPage() {
         if (closedId) requestAnimationFrame(() => themeRowRefs.current[closedId]?.focus());
       }}
     />
+    <ConfirmDialog />
     </>
   );
 }
