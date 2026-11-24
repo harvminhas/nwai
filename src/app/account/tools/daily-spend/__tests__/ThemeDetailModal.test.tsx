@@ -34,7 +34,7 @@ import { THEME_CHEVRON_CLASS, THEME_ROW_CLASS } from "../dailySpendReadLayout";
 
 const foodTheme: DailySpendThemeRow = {
   id: "food",
-  label: "Food",
+  label: "Eating",
   color: "#22c55e",
   dailyRate: 12.5,
   priorDailyRate: 10,
@@ -109,9 +109,9 @@ function Harness() {
         className={THEME_ROW_CLASS}
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
-        aria-label="Food details"
+        aria-label="Eating details"
       >
-        Food
+        Eating
         <svg className={THEME_CHEVRON_CLASS} aria-hidden viewBox="0 0 24 24">
           <path d="M9 5l7 7-7 7" />
         </svg>
@@ -131,7 +131,7 @@ describe("theme detail modal open and close", () => {
     render(<Harness />);
 
     expect(screen.queryByRole("dialog")).toBeNull();
-    const row = screen.getByRole("button", { name: "Food details" });
+    const row = screen.getByRole("button", { name: "Eating details" });
     expect(row.className).toContain("w-full");
     fireEvent.click(row);
 
@@ -147,7 +147,7 @@ describe("theme detail modal open and close", () => {
     expect(screen.getByText("Tim Hortons")).toBeTruthy();
     expect(screen.getByText("2 visits/mo")).toBeTruthy();
     expect(screen.getByText("In progress")).toBeTruthy();
-    expect(screen.getByRole("link", { name: seeInSpendingLabel("Food") }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: seeInSpendingLabel("Eating") }).getAttribute("href")).toBe(
       "/account/spending?category=Dining",
     );
 
@@ -165,31 +165,31 @@ describe("theme detail modal open and close", () => {
   });
 });
 
-const shoppingTheme: DailySpendThemeRow = {
+const housingTheme: DailySpendThemeRow = {
   ...foodTheme,
-  id: "shopping",
-  label: "Shopping",
-  color: "#a855f7",
+  id: "housing",
+  label: "Housing",
+  color: "#3b82f6",
   groceriesDaily: undefined,
   eatingOutDaily: undefined,
   detail: {
     ...foodTheme.detail,
     foodSplit: undefined,
     subcategories: [
-      { id: "clothing", label: "Clothing", dailyRate: 4, share: 0.67 },
-      { id: "other-shopping", label: "Other Shopping", dailyRate: 2, share: 0.33 },
+      { id: "rent", label: "Rent", dailyRate: 4, share: 0.67 },
+      { id: "other-housing", label: "Other Housing", dailyRate: 2, share: 0.33 },
     ],
     merchants: [
       {
-        slug: "amazon",
-        name: "Amazon",
+        slug: "landlord",
+        name: "Landlord",
         dailyRate: 3,
         total: 276,
         count: 6,
         visitsPerMonth: 2,
       },
     ],
-    spendingHref: "/account/spending?category=Shopping",
+    spendingHref: "/account/spending?category=Housing",
   },
 };
 
@@ -197,7 +197,7 @@ describe("non-food theme merchant list", () => {
   it("keeps a single top-5 merchant list", () => {
     render(
       <ThemeDetailModal
-        theme={shoppingTheme}
+        theme={housingTheme}
         currency="CAD"
         windowLabel="Aug–Oct 2026"
         onClose={() => undefined}
@@ -206,7 +206,7 @@ describe("non-food theme merchant list", () => {
     expect(screen.getByText(TOP_MERCHANTS_HEADING)).toBeTruthy();
     expect(screen.queryByText(TOP_GROCERY_STORES_HEADING)).toBeNull();
     expect(screen.queryByText(TOP_EAT_OUT_PLACES_HEADING)).toBeNull();
-    expect(screen.getByText("Amazon")).toBeTruthy();
-    expect(screen.getByText("Other Shopping")).toBeTruthy();
+    expect(screen.getByText("Landlord")).toBeTruthy();
+    expect(screen.getByText("Other Housing")).toBeTruthy();
   });
 });

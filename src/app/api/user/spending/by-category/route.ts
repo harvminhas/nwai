@@ -10,9 +10,8 @@ import { loadMerchantRenameContext } from "@/app/api/user/merchantRenameContext"
 /**
  * GET /api/user/spending/by-category
  * 
- * Returns spending aggregated by category with proper debt handling.
- * For loan/mortgage categories: uses computeScheduledDebtPayments (learned regular payment)
- * instead of summing raw transactions.
+ * Returns spending aggregated by category via computeMonthSpending
+ * (actual installment transactions, not scheduled estimates).
  * 
  * Query params:
  *   - window: "3mo" | "6mo" | "12mo" | "all" (default: "12mo")

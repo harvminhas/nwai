@@ -20,6 +20,7 @@ import type {
 } from "@/lib/dailySpend";
 import {
   DAILY_SPEND_RANGES,
+  DAILY_SPEND_INCLUDED_NOTE,
   DAILY_SPEND_THEMES,
   monthlyKeep,
   monthsSooner,
@@ -358,7 +359,7 @@ export default function DailySpendPage() {
                 ))}
               </ul>
               <p className="mt-3 text-xs text-gray-400">
-                Bills like rent, insurance and subscriptions are left out.
+                {DAILY_SPEND_INCLUDED_NOTE}
               </p>
             </div>
           </div>

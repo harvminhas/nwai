@@ -13,7 +13,7 @@ import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getYearMonth } from "@/lib/consolidate";
 import { buildAccountSlug, getAccountSlug } from "@/lib/accountSlug";
 import { getFinancialProfile } from "@/lib/financialProfile";
-import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { computeMonthSpending } from "@/lib/spendingMetrics";
 import { getHomeCurrency } from "@/lib/currencyUtils";
 import {
   isDebtServicingExpense,
@@ -126,16 +126,7 @@ export async function buildFinancialBrief(uid: string, mode: BriefMode = "chat",
   const monthlyIncome   = monthHistory?.incomeTotal        ?? incomeTotalForMonth(incomeTxns, month);
   const monthlyExp =
     monthHistory?.coreExpensesTotal ??
-    expenseTxns
-      .filter((t) => t.txMonth === month)
-      .filter(
-        (t) =>
-          !isCoreExcluded(t.category ?? "", {
-            debtType: t.debtType,
-            merchant: t.merchant,
-          }),
-      )
-      .reduce((s, t) => s + toHome(t.amount, t.currency), 0);
+    computeMonthSpending(month, expenseTxns, { homeCurrency: home, fxRates }).total;
   const monthlyDebt        = monthHistory?.debtPaymentsTotal    ?? 0;
   const monthlyMinDebt     = monthHistory?.minDebtPaymentsTotal ?? 0;  // minimum/scheduled only
   const monthlyExtraDebt   = Math.max(0, monthlyDebt - monthlyMinDebt); // extra above minimum

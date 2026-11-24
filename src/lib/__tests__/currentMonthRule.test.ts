@@ -242,7 +242,9 @@ describe("current-month rule — complete-month consistency", () => {
     );
     const month = getMonthlyCashFlow(input, completeYm);
     expect(month.moneyIn).not.toBe(withoutReviews.moneyIn);
-    expect(month.moneyOut).not.toBe(withoutReviews.moneyOut);
+    // Money out is actual installment/expense transactions, not scheduled
+    // loan amounts, so ignoring a payment-history anomaly does not change it.
+    expect(month.moneyOut).toBe(withoutReviews.moneyOut);
 
     const cash = buildCashFlowSummary(input).months.find((m) => m.yearMonth === completeYm)!;
     const coach = computeMoneyCoachBreakdown(

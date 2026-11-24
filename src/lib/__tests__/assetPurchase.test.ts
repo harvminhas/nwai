@@ -10,6 +10,7 @@ import {
 import { getCategoryBucket } from "../moneyCoachBuckets";
 import { CSV_PARSER_CATEGORIES } from "../csvParser";
 import {
+  computeMonthSpending,
   computeTypicalSpend,
   isCoreExcluded,
   isNonSpendingGroup,
@@ -74,6 +75,8 @@ describe("isNotSpending", () => {
     expect(isNotSpending("Other asset")).toBe(true);
     expect(isNotSpending("Groceries")).toBe(false);
     expect(isNotSpending("Dining")).toBe(false);
+    expect(isNotSpending("Fees")).toBe(false);
+    expect(isNotSpending("Other")).toBe(false);
     expect(isNotSpending("Debt Payments")).toBe(false);
   });
 
@@ -157,9 +160,7 @@ describe("spending surfaces agree for a month with an Asset purchase", () => {
     { expenseTxns: expenses, incomeTxns: income, homeCurrency: "CAD" },
     MONTH,
   );
-  const dashboardHeadline = expenses
-    .filter((t) => !isCoreExcluded(t.category, { merchant: t.merchant, debtType: t.debtType }))
-    .reduce((sum, t) => sum + t.amount, 0);
+  const dashboardHeadline = computeMonthSpending(MONTH, expenses).total;
   const typical = computeTypicalSpend(expenses, "2026-11");
   const spending = buildSpendingSummary(expenses, [], [], [], {}, "CAD", [MONTH]);
   const coach = computeMoneyCoachBreakdown(

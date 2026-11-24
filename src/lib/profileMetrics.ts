@@ -342,7 +342,7 @@ export function getMonthlyIncomeAllCredits(profile: FinancialProfileCache, yearM
 
 /**
  * Total expenses for a given month.
- * Pass `core: true` to exclude transfers, interest, Card Servicing, Investments & Savings, and Asset purchases (same routing as {@link isNotSpending} / {@link isCoreExcluded}).
+ * Pass `core: true` to use {@link FinancialProfileCache.monthlyHistory} `coreExpensesTotal` ({@link computeMonthSpending}).
  */
 export function getMonthlyExpenses(
   profile: FinancialProfileCache,

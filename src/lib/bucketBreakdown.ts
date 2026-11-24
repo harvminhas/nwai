@@ -9,9 +9,9 @@ import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot, DebtPaymentHis
 import type { MonthlyHistoryEntry } from "./financialProfile";
 import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
-import { isCoreExcluded } from "./spendingMetrics";
+import { computeMonthSpending } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
-import { computeScheduledDebtPayments } from "./debtPayments";
+import { resolveDebtServicingKind } from "./debtServicing";
 import { merchantSlug } from "./applyRules";
 import {
   displayedMerchantName,
@@ -116,91 +116,28 @@ export function computeBucketBreakdown(
   // Filter transactions to selected months
   const txnsInWindow = expenseTxns.filter(t => months.includes(t.txMonth));
 
+  // Same rows computeMonthSpending counts for each month (one exclusion rule,
+  // mirrored loan payments counted once), so drawer lines match the card total.
+  const spendingTxnsInWindow = months.flatMap((ym) =>
+    computeMonthSpending(ym, expenseTxns).lines.flatMap(
+      (line) => line.transactions as ExpenseTxnRecord[],
+    ),
+  );
+
   // Group by category
   const categoryMap = new Map<string, ExpenseTxnRecord[]>();
   
-  for (const txn of txnsInWindow) {
-    // Skip transfers and excluded categories
-    if (isCoreExcluded(txn.category)) continue;
-
-    // Skip Card Servicing - it's excluded from buckets
+  for (const txn of spendingTxnsInWindow) {
     const parentCategory = getParentCategory(txn.category);
-    if (parentCategory === "Debt") continue;
-
-    const txnBucket = getCategoryBucket(txn.category);
+    // Same fold as computeMonthlyBuckets: unknown labels count as Flexible.
+    const mapped = getCategoryBucket(txn.category);
+    const txnBucket: MoneyCoachBucket =
+      mapped === "fixed" || mapped === "essentials" || mapped === "flexible" ? mapped : "flexible";
     if (txnBucket !== bucket) continue;
 
     const existing = categoryMap.get(parentCategory) || [];
     existing.push(txn);
     categoryMap.set(parentCategory, existing);
-  }
-
-  // For Fixed bucket, add scheduled debt payments
-  let scheduledDebtAmount = 0;
-  const scheduledDebtCategories: CategoryBreakdown[] = [];
-  
-  if (bucket === "fixed") {
-    const scheduledPayments = computeScheduledDebtPayments(accountSnapshots, debtPaymentHistory, userReviews, fxRates, homeCurrency);
-    const monthCount = months.length || 1;
-    
-    // Group by debt type
-    const mortgagePayments = scheduledPayments.filter(p => p.debtType === "loan" && p.accountSlug.includes("mortgage"));
-    const loanPayments = scheduledPayments.filter(p => p.debtType === "loan" && !p.accountSlug.includes("mortgage"));
-    const creditPayments = scheduledPayments.filter(p => p.debtType === "credit");
-    
-    if (mortgagePayments.length > 0) {
-      const mortgageTotal = mortgagePayments.reduce((sum, p) => sum + p.amount, 0);
-      scheduledDebtAmount += mortgageTotal;
-      scheduledDebtCategories.push({
-        category: "Mortgage payment",
-        amount: mortgageTotal,
-        pctOfBucket: 0, // Will be calculated later
-        merchants: mortgagePayments.map(p => ({
-          merchant: p.accountName || p.accountSlug,
-          amount: p.amount,
-          accountSlug: p.accountSlug,
-          method: p.method,
-        })),
-        isScheduled: true,
-        isEstimated: mortgagePayments.some(p => p.isEstimated),
-      });
-    }
-
-    if (loanPayments.length > 0) {
-      const loanTotal = loanPayments.reduce((sum, p) => sum + p.amount, 0);
-      scheduledDebtAmount += loanTotal;
-      scheduledDebtCategories.push({
-        category: "Loan payments",
-        amount: loanTotal,
-        pctOfBucket: 0,
-        merchants: loanPayments.map(p => ({
-          merchant: p.accountName || p.accountSlug,
-          amount: p.amount,
-          accountSlug: p.accountSlug,
-          method: p.method,
-        })),
-        isScheduled: true,
-        isEstimated: loanPayments.some(p => p.isEstimated),
-      });
-    }
-
-    if (creditPayments.length > 0) {
-      const creditTotal = creditPayments.reduce((sum, p) => sum + p.amount, 0);
-      scheduledDebtAmount += creditTotal;
-      scheduledDebtCategories.push({
-        category: "Credit card minimums",
-        amount: creditTotal,
-        pctOfBucket: 0,
-        merchants: creditPayments.map(p => ({
-          merchant: p.accountName || p.accountSlug,
-          amount: p.amount,
-          accountSlug: p.accountSlug,
-          method: p.method,
-        })),
-        isScheduled: true,
-        isEstimated: creditPayments.some(p => p.isEstimated),
-      });
-    }
   }
 
   // Build category breakdowns
@@ -356,9 +293,6 @@ export function computeBucketBreakdown(
     });
   }
 
-  // Add scheduled debt categories
-  categories.push(...scheduledDebtCategories);
-
   // Sort by amount (largest first)
   categories.sort((a, b) => b.amount - a.amount);
 
@@ -372,9 +306,12 @@ export function computeBucketBreakdown(
   const notCountedHere: BucketDetailedBreakdown["notCountedHere"] = [];
   
   if (bucket === "fixed") {
-    // Card payments are excluded
-    const cardPayments = txnsInWindow.filter(t => getParentCategory(t.category) === "Debt");
-    const cardPaymentTotal = cardPayments.reduce((sum, t) => sum + Math.abs(t.amount), 0) / (months.length || 1);
+    const cardPayments = txnsInWindow.filter(
+      (t) =>
+        resolveDebtServicingKind(t.category, t.debtType, t.merchant, false) === "card",
+    );
+    const cardPaymentTotal =
+      cardPayments.reduce((sum, t) => sum + Math.abs(t.amount), 0) / (months.length || 1);
     if (cardPaymentTotal > 0) {
       notCountedHere.push({
         label: "Credit card payments",
@@ -386,8 +323,8 @@ export function computeBucketBreakdown(
 
   if (bucket === "savings") {
     notCountedHere.push({
-      label: "Scheduled mortgage & loan payments",
-      reason: "Counted in Fixed costs",
+      label: "Loan payments",
+      reason: "Counted in Fixed costs from the actual payment",
     });
   }
 

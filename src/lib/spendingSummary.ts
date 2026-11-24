@@ -1,8 +1,9 @@
 /**
  * Unified Spending Data Layer — uses shared bucket computation with dashboard.
- * 
- * CRITICAL: Calls computeMonthlyBuckets() from monthlyBucketComputation.ts
- * (same function used by dashboard) to ensure identical bucket totals.
+ *
+ * CRITICAL: Calls computeMonthlyBuckets() which totals a month via
+ * computeMonthSpending() — the same function as dashboard headline, typical
+ * month, and cash flow money out.
  */
 
 import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from "./extractTransactions";
@@ -285,7 +286,6 @@ export function buildSpendingSummary(
   
   monthlyHistory.forEach(month => {
     month.categories.forEach(cat => {
-      // Skip synthetic "Loan payments" category
       if (cat.category === "Loan payments") return;
       
       // Find transactions for this category in this month
@@ -352,7 +352,7 @@ export function buildSpendingSummary(
   // Build category summaries
   const categoryMap = new Map<string, CategorySummary>();
   
-  // Aggregate categories across all months (including synthetic "Loan payments")
+  // Aggregate categories across all months
   monthlyHistory.forEach(month => {
     month.categories.forEach(cat => {
       if (!categoryMap.has(cat.category)) {

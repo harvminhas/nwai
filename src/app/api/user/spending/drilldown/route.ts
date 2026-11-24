@@ -15,7 +15,8 @@ import { buildSpendingSummary } from "@/lib/spendingSummary";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { merchantSlug } from "@/lib/applyRules";
 import { resolveCanonicalMerchantSlug } from "@/lib/merchantUtils";
-import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { computeMonthSpending, isCoreExcluded } from "@/lib/spendingMetrics";
+import { toHome as toHomeCurrency } from "@/lib/currencyUtils";
 import { computeScheduledDebtPayments } from "@/lib/debtPayments";
 import { classifyDebtAccount } from "@/lib/debtPaymentKinds";
 import {
@@ -355,18 +356,10 @@ export async function GET(req: NextRequest) {
       profile.homeCurrency
     );
 
-    // Derive scheduled debt per month from summary (synthetic "Loan payments" category)
-    const scheduledDebtPerMonth = windowMonths.map(ym => {
-      const monthData = monthByYm.get(ym);
-      const loanPaymentsCat = monthData?.categories.find(c => c.category === "Loan payments");
-      return loanPaymentsCat?.amount || 0;
-    });
-
-    // Build debt-adjusted all-spending series: original - scheduled + loanMonthlySeries only
-    // (cards and one-offs never enter All spending — only loan payments count)
-    const adjustedAllSeries: MonthlySeries[] = windowMonths.map((ym, idx) => ({
+    // All spending = computeMonthSpending via spendingForMonth (no scheduled swap)
+    const adjustedAllSeries: MonthlySeries[] = windowMonths.map((ym) => ({
       yearMonth: ym,
-      amount: Math.max(0, (monthByYm.get(ym)?.total || 0) - scheduledDebtPerMonth[idx] + actualDebt.loanMonthlySeries[idx].amount),
+      amount: monthByYm.get(ym)?.total || 0,
       isInProgress: isMonthInProgress(ym, currentYm),
     }));
 
@@ -436,31 +429,28 @@ export async function GET(req: NextRequest) {
           };
         });
 
-      // Override Debt row with loan payments only (so parent equals child header)
-      // Use the actualDebt computed once for entire request
+      // Keep Debt clickable even when there were no installment payments this period
+      // (card payments live inside it but are not counted as spending).
       const debtRowIndex = rankedItems.findIndex(item => item.name === "Debt");
-      
-      const catAvg = actualDebt.loanTotal / completeCount;
-      const last3 = actualDebt.loanMonthlySeries.slice(-3);
-      const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
-      const trend = last3Avg - catAvg;
-
-      const debtRow: RankedItem = {
-        name: "Debt",
-        slug: "debt",
-        total: actualDebt.loanTotal, // Loan payments only (matches Debt category header)
-        share: adjustedAllTotal > 0 ? actualDebt.loanTotal / adjustedAllTotal : 0,
-        trend,
-        monthlySeries: actualDebt.loanMonthlySeries,
-        subLabel: "loans only", // UI will replace trend with this
-      };
-
-      // Debt must always stay on the list: card payments and one-offs live inside it
-      // even when no loan payment was made in the period, so it has to remain clickable.
-      if (debtRowIndex >= 0) {
-        rankedItems[debtRowIndex] = debtRow;
+      if (debtRowIndex < 0) {
+        rankedItems.push({
+          name: "Debt",
+          slug: "debt",
+          total: 0,
+          share: 0,
+          trend: 0,
+          monthlySeries: windowMonths.map((ym) => ({
+            yearMonth: ym,
+            amount: 0,
+            isInProgress: isMonthInProgress(ym, currentYm),
+          })),
+          subLabel: "loans only",
+        });
       } else {
-        rankedItems.push(debtRow);
+        rankedItems[debtRowIndex] = {
+          ...rankedItems[debtRowIndex],
+          subLabel: "loans only",
+        };
       }
 
       // Sort by total after Debt override/insertion
@@ -499,8 +489,8 @@ export async function GET(req: NextRequest) {
         .filter(cat => getParentCategory(cat.category) === parentCategory)
         .map(cat => cat.category);
 
-      // Debt comes from payment history, not the summary's scheduled "Loan payments" row,
-      // so it must still open when every card is paid in full.
+      // Debt must still open when every card is paid in full (card payments live here,
+      // even though they are not counted as spending).
       if (childCategories.length === 0 && parentCategory !== "Debt") {
         return NextResponse.json({ error: "Category not found" }, { status: 404 });
       }
@@ -524,27 +514,43 @@ export async function GET(req: NextRequest) {
         // Use actualDebt computed once for entire request
         
         // Build loan account rows
-        const loanAccounts = actualDebt.accounts.filter(a => a.kind === "loan");
-        const loanItems: RankedItem[] = loanAccounts.map(account => {
-          const total = account.regularTotal;
+        // Loan rows come from the same installment transactions that make up the
+        // Debt total (computeMonthSpending lines), so rows sum to the header.
+        // Loan-statement "payments made" are not used here: they can differ from
+        // the cash that left the user's accounts and would not match the total.
+        const loanMap = new Map<string, { name: string; monthlySeries: MonthlySeries[]; count: number }>();
+        const fxOpts = { homeCurrency: profile.homeCurrency, fxRates: profile.fxRates || {} };
+        const debtTxns = windowMonths.flatMap((ym) =>
+          computeMonthSpending(ym, profile.expenseTxns, fxOpts)
+            .lines.filter((line) => getParentCategory(line.category) === "Debt")
+            .flatMap((line) => line.transactions as typeof profile.expenseTxns),
+        );
+        for (const t of debtTxns) {
+          const amount = Math.abs(toHomeCurrency(t.amount, t.currency, fxOpts));
+          if (amount <= 0) continue;
+          const { slug, name } = resolveSpendingMerchant(t.merchant, aliasResolver, renameCtx.displayNames);
+          let row = loanMap.get(slug);
+          if (!row) {
+            row = { name, monthlySeries: windowMonths.map((ym) => ({ yearMonth: ym, amount: 0 })), count: 0 };
+            loanMap.set(slug, row);
+          }
+          const idx = windowMonths.indexOf(t.txMonth);
+          row.monthlySeries[idx].amount += amount;
+          row.count += 1;
+        }
+        const loanItems: RankedItem[] = Array.from(loanMap.entries()).map(([slug, row]) => {
+          const total = row.monthlySeries.reduce((sum, m) => sum + m.amount, 0);
           const avg = total / completeCount;
-          const last3 = account.regularMonthlySeries.slice(-3);
+          const last3 = row.monthlySeries.slice(-3);
           const last3Avg = last3.reduce((sum, m) => sum + m.amount, 0) / 3;
-          const trend = last3Avg - avg;
-
-          // SubLabel: regular amount per month plus payment count
-          const regularPerMonth = total / completeCount;
-          const subLabel = `usual payment - ${formatCurrency(regularPerMonth, profile.homeCurrency)}/mo - ${account.paymentCount} payment${account.paymentCount !== 1 ? 's' : ''}`;
-
           return {
-            name: account.accountName || account.accountSlug,
-            slug: account.accountSlug,
-            subLabel,
+            name: row.name,
+            slug,
+            subLabel: `${formatCurrency(avg, profile.homeCurrency)}/mo - ${row.count} payment${row.count !== 1 ? "s" : ""}`,
             total,
-            share: actualDebt.loanTotal > 0 ? total / actualDebt.loanTotal : 0,
-            trend,
-            monthlySeries: account.regularMonthlySeries,
-            extras: account.extras,
+            share: categoryTotal > 0 ? total / categoryTotal : 0,
+            trend: last3Avg - avg,
+            monthlySeries: row.monthlySeries,
             kind: "loan" as const,
           };
         }).sort((a, b) => b.total - a.total);
@@ -580,7 +586,7 @@ export async function GET(req: NextRequest) {
             key: "loans",
             label: "Loan payments",
             counted: true,
-            total: actualDebt.loanTotal,
+            total: categoryTotal,
             subLabel: "counted in spending",
             items: loanItems,
           },
@@ -616,10 +622,10 @@ export async function GET(req: NextRequest) {
             { label: "All spending", href: "/account/spending" },
             { label: "Debt" },
           ],
-          total: actualDebt.loanTotal, // Loan payments only (counted in spending)
-          avgPerMonth: actualDebt.loanTotal / completeCount,
-          monthlySeries: actualDebt.loanMonthlySeries,
-          comparisonSeries: adjustedAllSeries, // Same basis as All spending (loans counted, cards not)
+          total: categoryTotal,
+          avgPerMonth: categoryAvg,
+          monthlySeries: categoryMonthlySeries,
+          comparisonSeries: adjustedAllSeries,
           rankedItems: [], // Not used when groups present
           groups,
           oneOffTotal: actualDebt.oneOffTotal,
@@ -642,7 +648,7 @@ export async function GET(req: NextRequest) {
       // Filter to window months and this parent category only
       const scopedTxns = profile.expenseTxns.filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
-        if (isCoreExcluded(t.category)) return false;
+        if (isCoreExcluded(t.category, { debtType: t.debtType, merchant: t.merchant })) return false;
         if (getParentCategory(t.category) === "Debt") return false; // Skip synthetic debt
         return getParentCategory(t.category) === parentCategory;
       });
@@ -833,7 +839,7 @@ export async function GET(req: NextRequest) {
       // Include debt payment merchants (users can search and view them)
       const allMerchantTxns = profile.expenseTxns.filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
-        if (isCoreExcluded(t.category)) return false;
+        if (isCoreExcluded(t.category, { debtType: t.debtType, merchant: t.merchant })) return false;
         // 1. Resolve alias to canonical name first
         const resolvedMerchant = aliasResolver.resolve(t.merchant);
         // 2. Then apply slug and canonical resolution
@@ -970,7 +976,7 @@ export async function GET(req: NextRequest) {
       // Include Debt transactions (debt payment merchants like Honda Finance)
       const scopedTxns = profile.expenseTxns.filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
-        if (isCoreExcluded(t.category)) return false;
+        if (isCoreExcluded(t.category, { debtType: t.debtType, merchant: t.merchant })) return false;
         return true;
       });
 

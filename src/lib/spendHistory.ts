@@ -12,14 +12,14 @@ import type { ParsedStatementData } from "./types";
 import { consolidateStatements, getYearMonth } from "./consolidate";
 import { buildAccountSlug, getAccountSlug } from "./accountSlug";
 import { isBalanceMarker } from "./balanceMarkers";
-import { isCoreExcluded } from "./spendingMetrics";
+import { computeMonthSpending } from "./spendingMetrics";
 
 export interface MonthSpend {
   yearMonth: string;
   /** All expenses (balance-markers removed, transaction-date filtered). */
   expensesTotal: number;
   /**
-   * Core expenses — transfers, interest, and Card Servicing excluded (Installment Servicing included).
+   * Core expenses — {@link computeMonthSpending} for this month.
    */
   coreExpensesTotal: number;
 }
@@ -161,15 +161,16 @@ export async function buildMonthlySpendHistory(
       .filter((t) => !isBalanceMarker(t.merchant));
 
     const expensesTotal = monthTxns.reduce((s, t) => s + t.amount, 0);
-    const coreExpensesTotal = monthTxns
-      .filter(
-        (t) =>
-          !isCoreExcluded(t.category ?? "", {
-            debtType: (t as { debtType?: string }).debtType,
-            merchant: t.merchant,
-          }),
-      )
-      .reduce((s, t) => s + t.amount, 0);
+    const coreExpensesTotal = computeMonthSpending(
+      ym,
+      monthTxns.map((t) => ({
+        txMonth: ym,
+        amount: t.amount,
+        category: t.category,
+        merchant: t.merchant,
+        debtType: (t as { debtType?: string }).debtType,
+      })),
+    ).total;
 
     history.push({ yearMonth: ym, expensesTotal, coreExpensesTotal });
   }

@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     profile.expenseTxns
       .filter(t => {
         if (!windowMonths.includes(t.txMonth)) return false;
-        if (isCoreExcluded(t.category)) return false;
+        if (isCoreExcluded(t.category, { debtType: t.debtType, merchant: t.merchant })) return false;
         return getParentCategory(t.category) !== "Debt";
       })
       .forEach(t => {

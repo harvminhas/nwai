@@ -11,7 +11,7 @@
 import type { FinancialProfileCache } from "@/lib/financialProfile";
 import type { UserReviewContext } from "@/lib/userReviewContext";
 import { FREQ_MONTHLY } from "@/app/api/user/cash-commitments/route";
-import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { computeMonthSpending } from "@/lib/spendingMetrics";
 import { getParentCategory } from "@/lib/categoryTaxonomy";
 import { getHomeCurrency, toHome as toHomeCurrency } from "@/lib/currencyUtils";
 import type { ToolName } from "@/lib/chat/tools";
@@ -289,23 +289,14 @@ export function executeGetMonthlyBreakdown(
     }
 
     if (byCategory) {
-      const catTotals: Record<string, number> = {};
-      for (const t of profile.expenseTxns) {
-        if (t.txMonth !== h.yearMonth) continue;
-        if (
-          isCoreExcluded(t.category ?? "", {
-            debtType: (t as { debtType?: string }).debtType,
-            merchant: t.merchant,
-          })
-        ) {
-          continue;
-        } // skip transfers + revolving settlement + interest
-        const homeAmt = toHomeCurrency(t.amount, t.currency, profile);
-        catTotals[t.category] = (catTotals[t.category] ?? 0) + homeAmt;
-      }
-      entry.by_category = Object.entries(catTotals)
-        .sort(([, a], [, b]) => b - a)
-        .map(([cat, amt]) => ({ category: cat, amount: fmt(amt) }));
+      const { lines } = computeMonthSpending(h.yearMonth, profile.expenseTxns, {
+        homeCurrency: home,
+        fxRates,
+      });
+      entry.by_category = lines.map((line) => ({
+        category: line.category,
+        amount: fmt(line.amount),
+      }));
     }
 
     return entry;
@@ -348,24 +339,25 @@ export function executeRollupCategories(
   }
 
   const catTotals = new Map<string, { total: number; count: number }>();
+  const months = [...new Set(profile.expenseTxns.map((t) => t.txMonth))]
+    .filter((ym) => ym >= fromMonth && ym <= toMonth)
+    .sort();
 
-  for (const t of profile.expenseTxns) {
-    const ym = t.txMonth;
-    if (ym < fromMonth || ym > toMonth) continue;
-    if (
-      isCoreExcluded(t.category ?? "", {
-        debtType: (t as { debtType?: string }).debtType,
-        merchant: t.merchant,
-      })
-    ) {
-      continue;
+  for (const ym of months) {
+    const { lines } = computeMonthSpending(ym, profile.expenseTxns, {
+      homeCurrency: home,
+      fxRates,
+    });
+    for (const line of lines) {
+      const label = parentOnly
+        ? getParentCategory(line.category).trim() || "Other"
+        : line.category;
+      const prev = catTotals.get(label) ?? { total: 0, count: 0 };
+      catTotals.set(label, {
+        total: prev.total + line.amount,
+        count: prev.count + line.transactions.length,
+      });
     }
-    const label = parentOnly
-      ? getParentCategory(t.category ?? "Other").trim() || "Other"
-      : (t.category ?? "Uncategorized").trim() || "Uncategorized";
-    const homeAmt = toHomeCurrency(t.amount, t.currency, profile);
-    const prev = catTotals.get(label) ?? { total: 0, count: 0 };
-    catTotals.set(label, { total: prev.total + homeAmt, count: prev.count + 1 });
   }
 
   const categories = [...catTotals.entries()]
@@ -385,7 +377,7 @@ export function executeRollupCategories(
       currency: home,
       categories,
       note:
-        "Totals are core spending only (excludes transfers, interest, card/LOC servicing). Installment servicing stays included.",
+        "Totals are monthly spending from computeMonthSpending (excludes transfers, interest, card/LOC servicing, investments, and asset purchases). Other, fees, and installment payments are included.",
     },
   };
 }
@@ -421,26 +413,27 @@ export function executeRollupMerchants(
   }
 
   const merchantTotals = new Map<string, { total: number; count: number }>();
+  const months = [...new Set(profile.expenseTxns.map((t) => t.txMonth))]
+    .filter((ym) => ym >= fromMonth && ym <= toMonth)
+    .sort();
 
-  for (const t of profile.expenseTxns) {
-    const ym = t.txMonth;
-    if (ym < fromMonth || ym > toMonth) continue;
-    if (
-      isCoreExcluded(t.category ?? "", {
-        debtType: (t as { debtType?: string }).debtType,
-        merchant: t.merchant,
-      })
-    ) {
-      continue;
+  for (const ym of months) {
+    const { lines } = computeMonthSpending(ym, profile.expenseTxns, {
+      homeCurrency: home,
+      fxRates,
+    });
+    for (const line of lines) {
+      for (const t of line.transactions) {
+        const name = resolveSpendingMerchant(
+          (t.merchant ?? "Unknown").trim() || "Unknown",
+          renameCtx?.aliasResolver,
+          renameCtx?.displayNames,
+        ).name;
+        const homeAmt = toHomeCurrency(t.amount, t.currency, profile);
+        const prev = merchantTotals.get(name) ?? { total: 0, count: 0 };
+        merchantTotals.set(name, { total: prev.total + Math.abs(homeAmt), count: prev.count + 1 });
+      }
     }
-    const name = resolveSpendingMerchant(
-      (t.merchant ?? "Unknown").trim() || "Unknown",
-      renameCtx?.aliasResolver,
-      renameCtx?.displayNames,
-    ).name;
-    const homeAmt = toHomeCurrency(t.amount, t.currency, profile);
-    const prev = merchantTotals.get(name) ?? { total: 0, count: 0 };
-    merchantTotals.set(name, { total: prev.total + homeAmt, count: prev.count + 1 });
   }
 
   const merchants = [...merchantTotals.entries()]
@@ -460,7 +453,7 @@ export function executeRollupMerchants(
       currency: home,
       merchants,
       note:
-        "Core spending only (excludes transfers, interest, card/LOC servicing). For line-item detail call search_transactions.",
+        "Monthly spending from computeMonthSpending. For line-item detail call search_transactions.",
     },
   };
 }

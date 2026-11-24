@@ -306,7 +306,7 @@ describe("Spending summary matches dashboard", () => {
     }
   });
 
-  it("excludes Debt category transactions (handled by scheduled payments)", () => {
+  it("counts Other and actual debt payments, not scheduled loan rows", () => {
     const spendingSummary = buildSpendingSummary(
       expenseTxns,
       accountSnapshots,
@@ -316,17 +316,13 @@ describe("Spending summary matches dashboard", () => {
       "CAD"
     );
 
-    // "Debt Payments" category should NOT appear (it's excluded)
-    const debtPaymentsCategory = spendingSummary.categories.find(c => c.category === "Debt Payments");
-    expect(debtPaymentsCategory).toBeUndefined();
-    
-    // Only Groceries and Subscriptions should appear (spending buckets)
-    expect(spendingSummary.categories.length).toBe(2);
+    // Actual installment / Debt Payments transactions count; scheduled rows do not.
+    expect(spendingSummary.categories.some(c => c.category === "Debt Payments")).toBe(true);
     expect(spendingSummary.categories.some(c => c.category === "Groceries")).toBe(true);
     expect(spendingSummary.categories.some(c => c.category === "Subscriptions")).toBe(true);
-    
-    // Non-spending categories (savings, uncategorized) should NOT appear
+    expect(spendingSummary.categories.some(c => c.category === "Other")).toBe(true);
+    expect(spendingSummary.categories.some(c => c.category === "Loan payments")).toBe(false);
+
     expect(spendingSummary.categories.some(c => c.category === "Investments & Savings")).toBe(false);
-    expect(spendingSummary.categories.some(c => c.category === "Other")).toBe(false);
   });
 });
