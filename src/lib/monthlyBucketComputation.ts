@@ -1,35 +1,34 @@
 /**
  * Shared Monthly Bucket Computation
- * 
- * Used by BOTH dashboard cards/drawers AND spending page to ensure identical totals.
- * 
- * Computes per-month bucket totals including:
- * - Scheduled loan payments (added as synthetic "Loan payments" category)
- * - Regular expense transactions (excluding Debt parent category)
- * - Housing, Subscriptions, etc.
+ *
+ * Spending totals and line items come from {@link computeMonthSpending}.
+ * This module only classifies those lines into money-coach buckets and
+ * collects Into-assets (Investments & Savings + Asset purchase).
+ *
+ * Used by dashboard cards/drawers, the Spending page, and cash flow money out.
  */
 
-import type { ExpenseTxnRecord, AccountSnapshot } from "./extractTransactions";
-import type { DebtPaymentHistoryEntry } from "./extractTransactions";
+import type { ExpenseTxnRecord, AccountSnapshot, DebtPaymentHistoryEntry } from "./extractTransactions";
 import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
-import { isNotSpending, isNonSpendingGroup } from "./spendingMetrics";
+import { computeMonthSpending, isNonSpendingGroup } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
 import { mean, monthsForCashFlowAverage } from "./cashFlowAverage";
-import { computeScheduledDebtPayments, type ScheduledDebtPayment } from "./debtPayments";
+import { toHome } from "./currencyUtils";
+import type { ScheduledDebtPayment } from "./debtPayments";
 
 export interface MonthlyBucketItem {
-  /** Category name (or "Loan payments" for scheduled debt) */
+  /** Category name */
   category: string;
   /** Bucket classification */
   bucket: MoneyCoachBucket;
   /** Total amount for this category in the month */
   amount: number;
-  /** Underlying transactions (empty for synthetic "Loan payments") */
+  /** Underlying transactions */
   transactions: ExpenseTxnRecord[];
-  /** True if this is a synthetic line item (e.g. scheduled debt payments) */
+  /** True if this is a synthetic line item (loan payments are no longer synthetic) */
   isSynthetic: boolean;
-  /** For synthetic loan payments, the scheduled payment details */
+  /** @deprecated Scheduled loan rows are no longer injected into spending. */
   scheduledPayments?: ScheduledDebtPayment[];
 }
 
@@ -38,11 +37,11 @@ export interface MonthlyBucketResult {
   yearMonth: string;
   /** Bucket totals */
   buckets: Record<MoneyCoachBucket, number>;
-  /** Per-category breakdown with transactions (ONLY spending buckets: fixed, essentials, flexible) */
+  /** Per-category breakdown with transactions (spending only) */
   items: MonthlyBucketItem[];
-  /** Total spending (sum of fixed + essentials + flexible) */
+  /** Total spending — same figure as {@link computeMonthSpending} */
   total: number;
-  /** Non-spending items (savings, assets, uncategorized) — excluded from total */
+  /** Non-spending items (savings, assets) — excluded from total */
   excludedItems: MonthlyBucketItem[];
   /**
    * Money moved into assets this month (Asset purchases + Investments & Savings).
@@ -74,123 +73,103 @@ export function intoAssetsLinesFromItems(
     .sort((a, b) => b.amount - a.amount);
 }
 
-/**
- * Compute bucket breakdown for a single month.
- * This is the SINGLE SOURCE OF TRUTH for bucket calculations.
- * 
- * Used by:
- * - Dashboard Money Coach cards/drawers
- * - Spending page summary
- * - Regression tests
- */
-export function computeMonthlyBuckets(
-  yearMonth: string,
-  expenseTxns: ExpenseTxnRecord[],
-  accountSnapshots: AccountSnapshot[],
-  debtPaymentHistory: DebtPaymentHistoryEntry[],
-  userReviews: DebtPaymentReview[],
-  fxRates: Record<string, number>,
-  homeCurrency: string
-): MonthlyBucketResult {
-  // Compute scheduled debt payments (added to Fixed bucket)
-  const scheduledPayments = computeScheduledDebtPayments(
-    accountSnapshots,
-    debtPaymentHistory,
-    userReviews,
-    fxRates,
-    homeCurrency
-  );
-  
-  const totalScheduledDebt = scheduledPayments.reduce((sum, p) => sum + p.amount, 0);
-  
-  // Initialize buckets
-  const buckets: Record<MoneyCoachBucket, number> = {
-    fixed: totalScheduledDebt, // Start with scheduled debt payments
+function emptyBuckets(): Record<MoneyCoachBucket, number> {
+  return {
+    fixed: 0,
     essentials: 0,
     flexible: 0,
     savings: 0,
     assets: 0,
     uncategorized: 0,
   };
-  
-  const items: MonthlyBucketItem[] = [];
-  
-  // Add synthetic "Loan payments" item if there are scheduled payments
-  if (scheduledPayments.length > 0) {
-    items.push({
-      category: "Loan payments",
-      bucket: "fixed",
-      amount: totalScheduledDebt,
-      transactions: [],
-      isSynthetic: true,
-      scheduledPayments,
-    });
-  }
-  
-  // Get transactions for this month
-  const monthTxns = expenseTxns.filter(t => t.txMonth === yearMonth);
-  
-  // Group by category
-  const categoryMap = new Map<string, MonthlyBucketItem>();
-  
-  for (const txn of monthTxns) {
-    const excludeOpts = { debtType: txn.debtType, merchant: txn.merchant };
-    // Skip transfers / interest / card servicing. Asset moves still flow into
-    // excludedItems so Spending and cash flow can show "Into assets".
-    if (isNotSpending(txn.category, excludeOpts) && !isNonSpendingGroup(txn.category)) continue;
-    
-    // Skip Debt parent category - handled by scheduled payments above
-    const parentCategory = getParentCategory(txn.category);
-    if (parentCategory === "Debt") continue;
-    
+}
+
+function homeAmount(
+  amount: number,
+  currency: string | null | undefined,
+  fxRates: Record<string, number>,
+  homeCurrency: string,
+): number {
+  return Math.abs(toHome(amount, currency, { homeCurrency, fxRates }));
+}
+
+/**
+ * Bucket breakdown for a single month.
+ *
+ * Spending total and category lines come from {@link computeMonthSpending}.
+ * Scheduled loan / card-minimum estimates are not added — actual installment
+ * transactions are already in those lines.
+ *
+ * accountSnapshots / debtPaymentHistory / userReviews are accepted so existing
+ * callers keep compiling; they no longer change the spending total.
+ */
+export function computeMonthlyBuckets(
+  yearMonth: string,
+  expenseTxns: ExpenseTxnRecord[],
+  _accountSnapshots: AccountSnapshot[],
+  _debtPaymentHistory: DebtPaymentHistoryEntry[],
+  _userReviews: DebtPaymentReview[],
+  fxRates: Record<string, number>,
+  homeCurrency: string,
+): MonthlyBucketResult {
+  const spending = computeMonthSpending(yearMonth, expenseTxns, {
+    homeCurrency,
+    fxRates,
+  });
+
+  const buckets = emptyBuckets();
+  const items: MonthlyBucketItem[] = spending.lines.map((line) => {
+    // Spending lines always land in a spending bucket so Fixed+Essentials+Flexible
+    // matches computeMonthSpending.total. Unknown labels fold into Flexible.
+    const mapped = getCategoryBucket(line.category);
+    const bucket: MoneyCoachBucket =
+      mapped === "fixed" || mapped === "essentials" || mapped === "flexible"
+        ? mapped
+        : "flexible";
+    buckets[bucket] += line.amount;
+    return {
+      category: line.category,
+      bucket,
+      amount: line.amount,
+      transactions: line.transactions as ExpenseTxnRecord[],
+      isSynthetic: false,
+    };
+  });
+
+  const excludedMap = new Map<string, MonthlyBucketItem>();
+  for (const txn of expenseTxns) {
+    if (txn.txMonth !== yearMonth) continue;
+    if (!isNonSpendingGroup(txn.category)) continue;
+    const amount = homeAmount(txn.amount, txn.currency, fxRates, homeCurrency);
+    if (amount <= 0) continue;
     const bucket = getCategoryBucket(txn.category);
-    const amount = Math.abs(txn.amount);
-    
-    // Add to bucket total
     buckets[bucket] += amount;
-    
-    // Add to category item
-    if (!categoryMap.has(txn.category)) {
-      categoryMap.set(txn.category, {
+    const existing = excludedMap.get(txn.category);
+    if (existing) {
+      existing.amount += amount;
+      existing.transactions.push(txn);
+    } else {
+      excludedMap.set(txn.category, {
         category: txn.category,
         bucket,
-        amount: 0,
-        transactions: [],
+        amount,
+        transactions: [txn],
         isSynthetic: false,
       });
     }
-    
-    const item = categoryMap.get(txn.category)!;
-    item.amount += amount;
-    item.transactions.push(txn);
   }
-  
-  // Add category items to result, split by spending vs non-spending
-  const allItems = Array.from(categoryMap.values());
-  const spendingBuckets: MoneyCoachBucket[] = ["fixed", "essentials", "flexible"];
-  
-  const spendingItems = allItems.filter(item => spendingBuckets.includes(item.bucket));
-  const excludedItems = allItems.filter(item => !spendingBuckets.includes(item.bucket));
-  
-  // Add synthetic loan payments to spending items
-  items.push(...spendingItems);
-  
-  // Sort both by amount (descending)
+
   items.sort((a, b) => b.amount - a.amount);
-  excludedItems.sort((a, b) => b.amount - a.amount);
-  
-  const total = buckets.fixed + buckets.essentials + buckets.flexible;
-  const intoAssets = buckets.assets + buckets.savings;
-  const intoAssetsLines = intoAssetsLinesFromItems(excludedItems);
-  
+  const excludedItems = Array.from(excludedMap.values()).sort((a, b) => b.amount - a.amount);
+
   return {
     yearMonth,
     buckets,
     items,
-    total,
+    total: spending.total,
     excludedItems,
-    intoAssets,
-    intoAssetsLines,
+    intoAssets: buckets.assets + buckets.savings,
+    intoAssetsLines: intoAssetsLinesFromItems(excludedItems),
   };
 }
 
@@ -206,14 +185,22 @@ export function computeAverageBuckets(
   debtPaymentHistory: DebtPaymentHistoryEntry[],
   userReviews: DebtPaymentReview[],
   fxRates: Record<string, number>,
-  homeCurrency: string
+  homeCurrency: string,
 ): {
   averages: Record<MoneyCoachBucket, number>;
   monthlyResults: MonthlyBucketResult[];
 } {
   const months = monthsForCashFlowAverage(yearMonths, { rangeMonths: yearMonths });
   const monthlyResults = months.map((ym) =>
-    computeMonthlyBuckets(ym, expenseTxns, accountSnapshots, debtPaymentHistory, userReviews, fxRates, homeCurrency)
+    computeMonthlyBuckets(
+      ym,
+      expenseTxns,
+      accountSnapshots,
+      debtPaymentHistory,
+      userReviews,
+      fxRates,
+      homeCurrency,
+    ),
   );
 
   return {

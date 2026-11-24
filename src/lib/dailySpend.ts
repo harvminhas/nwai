@@ -1,8 +1,8 @@
 /**
  * Daily spend — everyday-theme mapping and daily-rate math.
  *
- * Category amounts come from spendingForMonth / computeMonthlyBuckets /
- * buildSpendingSummary (same path as the Spending page). Subtypes roll up
+ * Category amounts come from spendingForMonth → computeMonthSpending
+ * (same function as the Spending page and dashboard headline). Subtypes roll up
  * via getParentCategory. Averages use monthsForCashFlowAverage (finished
  * months only) and mean() from cashFlowAverage.ts.
  *

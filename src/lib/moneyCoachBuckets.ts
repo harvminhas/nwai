@@ -56,12 +56,12 @@ const PARENT_TO_BUCKET: Record<string, MoneyCoachBucket> = {
 
   // Asset purchase (vehicle, home, business — not spending; own group)
   "Asset purchase": "assets",
-  
-  // Excluded from buckets (internal transfers, fees, interest, other)
-  // "Transfers", "Transfer Out", "Transfers & Payments" → not counted in spending (filtered by isCoreExcluded)
-  // "Fees" → bank fees, shown separately or in uncategorized
-  // "Interest" → not counted in spending
-  // "Other" → uncategorized
+
+  // Real money out that still counts as spending (computeMonthSpending)
+  "Fees": "fixed",                     // Bank fees, NSF/OD, annual card fee
+  "Other": "flexible",                 // Uncategorized outflows — hiding them understates spending
+
+  // Transfers / Transfer Out / Transfers & Payments / Interest → isNotSpending
 };
 
 /**

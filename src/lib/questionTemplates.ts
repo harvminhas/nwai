@@ -10,7 +10,7 @@
 
 import type { FinancialProfileCache } from "./financialProfile";
 import { getCategoryBucket, BUCKET_METADATA } from "./moneyCoachBuckets";
-import { isCoreExcluded } from "./spendingMetrics";
+import { computeMonthSpending } from "./spendingMetrics";
 import { fmt } from "./currencyUtils";
 
 export interface QuestionTemplate {
@@ -63,12 +63,12 @@ export const QUESTION_TEMPLATES: QuestionTemplate[] = [
     handler: (profile) => {
       const { expenseTxns, homeCurrency } = profile;
       
-      // Group by category
       const byCategory = new Map<string, number>();
-      for (const txn of expenseTxns) {
-        if (isCoreExcluded(txn.category)) continue;
-        const current = byCategory.get(txn.category) || 0;
-        byCategory.set(txn.category, current + Math.abs(txn.amount));
+      const months = [...new Set(expenseTxns.map((t) => t.txMonth))];
+      for (const ym of months) {
+        for (const line of computeMonthSpending(ym, expenseTxns).lines) {
+          byCategory.set(line.category, (byCategory.get(line.category) ?? 0) + line.amount);
+        }
       }
       
       // Get top 3
@@ -248,12 +248,12 @@ export const QUESTION_TEMPLATES: QuestionTemplate[] = [
         return "Upload statements to see your expense breakdown.";
       }
       
-      // Group by category
       const byCategory = new Map<string, number>();
-      for (const txn of expenseTxns) {
-        if (isCoreExcluded(txn.category)) continue;
-        const current = byCategory.get(txn.category) || 0;
-        byCategory.set(txn.category, current + Math.abs(txn.amount));
+      const yearMonths = [...new Set(expenseTxns.map((t) => t.txMonth))];
+      for (const ym of yearMonths) {
+        for (const line of computeMonthSpending(ym, expenseTxns).lines) {
+          byCategory.set(line.category, (byCategory.get(line.category) ?? 0) + line.amount);
+        }
       }
       
       const sorted = Array.from(byCategory.entries())

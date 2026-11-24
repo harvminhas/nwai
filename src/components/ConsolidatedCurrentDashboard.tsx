@@ -11,7 +11,7 @@ import AgentInsightCards from "@/components/AgentInsightCards";
 import type { ParsedStatementData } from "@/lib/types";
 import type { AgentCard } from "@/lib/agentTypes";
 import { isBalanceMarker } from "@/lib/balanceMarkers";
-import { isCoreExcluded } from "@/lib/spendingMetrics";
+import { computeMonthSpending } from "@/lib/spendingMetrics";
 import { matchingMerchantName } from "@/lib/merchantAliases";
 import { fmt, getCurrencySymbol } from "@/lib/currencyUtils";
 import { getCurrentMonth } from "@/lib/monthAnchor";
@@ -1238,22 +1238,23 @@ export default function ConsolidatedCurrentDashboard({
     return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
   })();
 
-  // Current-month discretionary expenses — core only (isCoreExcluded)
+  // Current-month spending — same function as typical month / Spending / cash flow
   const allExpenseTxns = data?.expenses?.transactions ?? [];
   const calendarMonthTxns = allExpenseTxns.filter(
     (t) => (!t.date || t.date.startsWith(yearMonth)) && !isBalanceMarker(matchingMerchantName(t))
   );
   const expenses = calendarMonthTxns.length > 0
-    ? calendarMonthTxns
-        .filter(
-          (t) =>
-            !isCoreExcluded(t.category ?? "", {
-              debtType: (t as { debtType?: string }).debtType,
-              // Statement descriptor, not the saved rename — classification must not change on rename.
-              merchant: matchingMerchantName(t),
-            }),
-        )
-        .reduce((s, t) => s + t.amount, 0)
+    ? computeMonthSpending(
+        yearMonth,
+        calendarMonthTxns.map((t) => ({
+          txMonth: yearMonth,
+          amount: t.amount,
+          category: t.category,
+          merchant: matchingMerchantName(t),
+          debtType: (t as { debtType?: string }).debtType,
+          currency: t.currency,
+        })),
+      ).total
     : (data?.expenses?.total ?? 0);
 
   // saved uses the same filtered expense figure so the hero card stays consistent

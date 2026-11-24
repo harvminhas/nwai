@@ -4,7 +4,7 @@
  * Built on the same helpers as the Income page, Spending page, and dashboard
  * "Where Your Money Goes" cards:
  *   Money in  = buildIncomeSummary monthly total
- *   Money out = spendingForMonth / computeMonthlyBuckets (Fixed + Essentials + Flexible)
+ *   Money out = spendingForMonth → computeMonthlyBuckets → computeMonthSpending
  *   Leftover  = money in − money out
  *   Savings rate = leftover / money in
  *

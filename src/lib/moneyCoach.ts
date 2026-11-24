@@ -9,7 +9,6 @@
 import type { FinancialProfileCache } from "./financialProfile";
 import type { DebtPaymentReview } from "./types";
 import { getBucketAdvice, BUCKET_METADATA, type MoneyCoachBucket } from "./moneyCoachBuckets";
-import { computeScheduledDebtPayments } from "./debtPayments";
 import { averageCashFlow, cashFlowInputFromProfile } from "./monthlyCashFlow";
 
 export interface MoneyCoachBucketSummary {
@@ -113,15 +112,6 @@ export function computeMoneyCoachBreakdown(
     uncategorized: 0,
   };
 
-  const scheduledPayments = computeScheduledDebtPayments(
-    (accountSnapshots.length > 0 ? accountSnapshots : profile.accountSnapshots) as never,
-    profile.debtPaymentHistory,
-    userReviews,
-    profile.fxRates ?? {},
-    homeCurrency || "CAD",
-  );
-  const hasEstimatedDebt = scheduledPayments.some((p) => p.isEstimated);
-
   const savingsRate = avg.savingsRate ?? 0;
 
   const bucketSummaries: MoneyCoachBucketSummary[] = (
@@ -141,7 +131,7 @@ export function computeMoneyCoachBreakdown(
         pctOfIncome,
         targetPct: metadata.targetPct,
         advice: getBucketAdvice(bucket, pctOfIncome, metadata.targetPct),
-        hasEstimates: bucket === "fixed" && hasEstimatedDebt,
+        hasEstimates: false,
       };
     });
 

@@ -23,7 +23,7 @@ import type * as Firestore from "firebase-admin/firestore";
 import { extractAllTransactions } from "./extractTransactions";
 import { calculateNetWorthForMonths } from "./netWorthCalculationCore";
 import { isDebtServicingExpense, resolveDebtServicingKind } from "./debtServicing";
-import { computeTypicalSpend, INCOME_TRANSFER_RE, isCoreExcluded } from "./spendingMetrics";
+import { computeMonthSpending, computeTypicalSpend, INCOME_TRANSFER_RE } from "./spendingMetrics";
 import type { CashIncomeEntry } from "./cashIncome";
 import { occurrencesInMonth } from "./cashIncome";
 import type { CashCommitment } from "@/app/api/user/cash-commitments/route";
@@ -63,7 +63,7 @@ const MAX_CACHE_MS   = 24 * 60 * 60 * 1000; // 24 h — force full rebuild
  * Bump this whenever filtering / computation logic changes so that all cached
  * profiles are rebuilt on the next request regardless of data version.
  */
-export const SCHEMA_VERSION = "73"; // Core spend excludes Investments & Savings and Asset purchase (isNotSpending).
+export const SCHEMA_VERSION = "74"; // Monthly spend from computeMonthSpending (Other/Fees in; actual installment txns).
 
 // ── Per-account monthly balance history ───────────────────────────────────────
 /**
@@ -100,7 +100,7 @@ export interface MonthlyHistoryEntry {
   yearMonth: string;
   /** Raw total of all expense transactions (no transfers filter) */
   expensesTotal: number;
-  /** Core expenses = expensesTotal minus transfers, interest, Card Servicing, Investments & Savings, and Asset purchase (see isNotSpending / isCoreExcluded) */
+  /** Core expenses = {@link computeMonthSpending} for this month, plus cash commitments */
   coreExpensesTotal: number;
   /** Total income for this month — excludes transfers, Transfer In, Other (see isExcludedFromCoreIncomeTotal). */
   incomeTotal: number;
@@ -742,7 +742,6 @@ export async function buildAndCacheFinancialProfile(
 
   const now = new Date();
   const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const typicalMonthly = computeTypicalSpend(allExpenseTxns, thisMonth);
   const sourceVersion  = computeSourceVersion(confirmedDocs);
 
   // Expenses: keep last 12 months (large volume — stay within Firestore 1 MB limit)
@@ -1246,15 +1245,8 @@ export async function buildAndCacheFinancialProfile(
     return {
       yearMonth: ym,
       expensesTotal: monthExp.reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashCommitmentsForMonth,
-      coreExpensesTotal: monthExp
-        .filter(
-          (t) =>
-            !isCoreExcluded(t.category ?? "", {
-              debtType: t.debtType,
-              merchant: t.merchant,
-            }),
-        )
-        .reduce((s, t) => s + toHome(t.amount, t.currency), 0) + cashCommitmentsForMonth,
+      coreExpensesTotal:
+        computeMonthSpending(ym, monthExp, { homeCurrency, fxRates }).total + cashCommitmentsForMonth,
       debtPaymentsTotal: debtTxns.reduce((s, t) => s + toHome(t.amount, t.currency), 0),
       cardServicingPaymentsTotal: cardServicingTxns.reduce((s, t) => s + toHome(t.amount, t.currency), 0),
       minDebtPaymentsTotal,
@@ -1364,6 +1356,11 @@ export async function buildAndCacheFinancialProfile(
     const d = doc.data() as { frequency?: string };
     if (d.frequency) merchantCadenceMap[doc.id] = d.frequency;
   }
+
+  const typicalMonthly = computeTypicalSpend(allExpenseTxns, thisMonth, {
+    homeCurrency,
+    fxRates,
+  });
 
   const profile: FinancialProfileCache = {
     updatedAt: now.toISOString(),

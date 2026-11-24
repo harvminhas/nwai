@@ -8,7 +8,7 @@
  * - Mixed accountId formats
  * 
  * Verifies:
- * - Fixed costs show Scotia 1142, FlexLine ~3.3K for Jul-Sep
+ * - Fixed costs count actual installment transactions (not scheduled estimates)
  * - FlexLine Jul/Sep flagged as anomalies
  * - Scotia principal paid ~2,978
  * - Draws never count as spending
@@ -18,7 +18,7 @@
 
 import { describe, test, expect } from 'vitest';
 import type { ParsedStatementData } from '../lib/types';
-import type { DebtPaymentHistoryEntry, AccountSnapshot } from '../lib/extractTransactions';
+import type { DebtPaymentHistoryEntry, AccountSnapshot, ExpenseTxnRecord } from '../lib/extractTransactions';
 import { computeScheduledDebtPayments } from '../lib/debtPayments';
 import { computeBucketBreakdown } from '../lib/bucketBreakdown';
 
@@ -256,7 +256,7 @@ describe("Data Access Layer: Comprehensive Integration", () => {
   });
 
   describe("computeBucketBreakdown: Fixed Costs (Jul-Sep 2026)", () => {
-    test("Shows Scotia 1142 and FlexLine ~3291 for every month", () => {
+    test("uses actual installment transactions, not scheduled loan estimates", () => {
       const accountSnapshots = buildAccountSnapshots();
       const allPaymentHistory = [
         ...buildScotiaPaymentHistory(),
@@ -264,45 +264,78 @@ describe("Data Access Layer: Comprehensive Integration", () => {
       ];
       const months = ["2026-07", "2026-08", "2026-09"];
 
-      const breakdown = computeBucketBreakdown(
+      const empty = computeBucketBreakdown(
         "fixed",
-        [], // expenseTxns
+        [],
         accountSnapshots,
         allPaymentHistory,
         months,
         "CAD",
-        [], // userReviews
-        {}, // fxRates
-        undefined, // merchantCadence
-        undefined  // subscriptions
+        [],
+        {},
+        undefined,
+        undefined,
+      );
+      expect(empty.categories.find((c) => c.category.toLowerCase().includes("loan"))).toBeUndefined();
+      expect(empty.monthlyAverage).toBe(0);
+
+      const installmentTxns: ExpenseTxnRecord[] = months.flatMap((ym) => [
+        {
+          date: `${ym}-15`,
+          txMonth: ym,
+          merchant: "Scotia Plan",
+          category: "Installment Servicing",
+          amount: 1142.25,
+          accountSlug: "checking-1",
+          accountLabel: "Chequing",
+          currency: "CAD",
+          debtType: "personal_loan",
+        },
+        {
+          date: `${ym}-16`,
+          txMonth: ym,
+          merchant: "FlexLine",
+          category: "Installment Servicing",
+          amount: 3291,
+          accountSlug: "checking-1",
+          accountLabel: "Chequing",
+          currency: "CAD",
+          debtType: "line_of_credit",
+        },
+      ]);
+
+      const breakdown = computeBucketBreakdown(
+        "fixed",
+        installmentTxns,
+        accountSnapshots,
+        allPaymentHistory,
+        months,
+        "CAD",
+        [],
+        {},
+        undefined,
+        undefined,
       );
 
-      // Should have loan payments category
-      const loanCat = breakdown.categories.find(c => 
-        c.category.toLowerCase().includes("loan")
+      const loanCat = breakdown.categories.find((c) =>
+        c.category.toLowerCase().includes("debt") ||
+        c.category.toLowerCase().includes("installment") ||
+        c.category.toLowerCase().includes("loan"),
       );
-      
       expect(loanCat).toBeDefined();
-      expect(loanCat!.isScheduled).toBe(true);
-      
-      // Total should be Scotia + FlexLine
-      expect(loanCat!.amount).toBeGreaterThan(4300);
-      expect(loanCat!.amount).toBeLessThan(4600);
-      
-      // Check individual merchants
-      const scotia = loanCat!.merchants.find(m => 
-        m.merchant.toLowerCase().includes("scotia")
+      expect(loanCat!.isScheduled).not.toBe(true);
+      expect(loanCat!.amount).toBeCloseTo(1142.25 + 3291, 2);
+
+      const scotia = loanCat!.merchants.find((m) =>
+        m.merchant.toLowerCase().includes("scotia"),
       );
-      const flexline = loanCat!.merchants.find(m => 
-        m.merchant.toLowerCase().includes("flexline")
+      const flexline = loanCat!.merchants.find((m) =>
+        m.merchant.toLowerCase().includes("flexline"),
       );
-      
       expect(scotia).toBeDefined();
       expect(scotia!.amount).toBeCloseTo(1142.25, 2);
-      
       expect(flexline).toBeDefined();
-      expect(flexline!.amount).toBeGreaterThan(3200);
-      expect(flexline!.amount).toBeLessThan(3900);
+      expect(flexline!.amount).toBeCloseTo(3291, 2);
     });
   });
 

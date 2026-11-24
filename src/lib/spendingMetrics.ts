@@ -1,20 +1,34 @@
 /**
- * Canonical definitions for "typical monthly spending".
+ * Canonical definitions for monthly spending.
  *
- * CORE_EXCLUDE_RE matches transfers + interest only (category/parent string test).
- * Debt servicing uses {@link isNotSpending} / {@link isCoreExcluded}: **Card Servicing**
- * (revolving settlement) is excluded from core totals; **Installment Servicing** is
- * included — avoids double-counting card purchases while keeping mortgage/auto/student
- * installment cash visible.
+ * {@link computeMonthSpending} is the only function that totals a month and
+ * its line items. Dashboard headline, typical month, Spending page, cash flow
+ * money out, chat/insights, and drawers all call it (directly or through
+ * spendingForMonth / computeMonthlyBuckets).
  *
- * Non-spending groups (Investments & Savings, Asset purchase) are also excluded so
- * the dashboard headline, typical month, chat, Spending page, and cash flow agree.
+ * What counts as spending:
+ * - Everyday purchases, Other/uncategorized outflows, and bank Fees
+ * - Installment Servicing (the actual loan payment that left the account)
  *
- * Rule: if you change exclusion logic you change what "Typical Month" means everywhere.
+ * What does not:
+ * - Transfers, Card Servicing (credit-card payments), Interest
+ * - Investments & Savings, Asset purchase, balance-marker rows
+ *
+ * Interest stays excluded: it is a finance charge on balances whose purchases
+ * are already counted, and no surface currently shows it as spending.
+ *
+ * Loans use actual installment transactions, never scheduled/estimated
+ * payments. Card purchases are already in their categories; counting the card
+ * payment or a scheduled minimum would double-count. Asset purchases are
+ * excluded, so counting the installment cash-out does not also count the
+ * thing the loan financed.
+ *
+ * Rule: if you change exclusion logic you change what spending means everywhere.
  */
 
-import type { ExpenseTxnRecord } from "./extractTransactions";
+import { isBalanceMarker } from "./balanceMarkers";
 import { completeMonthsWithData } from "./cashFlowAverage";
+import { toHome } from "./currencyUtils";
 import { getParentCategory } from "./categoryTaxonomy";
 import { resolveDebtServicingKind } from "./debtServicing";
 
@@ -73,9 +87,8 @@ export function isTransferInterestOrCardServicing(
  * {@link isTransferInterestOrCardServicing} covers PLUS non-spending groups
  * (Asset purchase and Investments & Savings).
  *
- * {@link isCoreExcluded} and {@link computeMonthlyBuckets} both call this so
- * dashboard headline, typical month, chat/insights, Spending, and cash flow
- * use the same month numbers.
+ * {@link computeMonthSpending} is the only place that sums a month — this
+ * predicate is what it uses to decide whether a row is spending.
  */
 export function isNotSpending(category: string, opts?: CoreExcludeOpts): boolean {
   return isTransferInterestOrCardServicing(category, opts) || isNonSpendingGroup(category);
@@ -111,37 +124,126 @@ export interface TypicalSpend {
 }
 
 /**
- * Compute typical (median + avg) monthly discretionary spending from a flat
- * list of expense transactions — matches `coreExpensesTotal` in the profile cache.
+ * Minimal transaction shape {@link computeMonthSpending} needs.
+ * {@link ExpenseTxnRecord} and statement {@link ExpenseTransaction} both fit.
+ */
+export type SpendingTxnLike = {
+  amount: number;
+  category?: string;
+  merchant?: string;
+  debtType?: string;
+  currency?: string | null;
+  txMonth?: string;
+  date?: string;
+  accountSlug?: string;
+};
+
+export type MonthSpendingOptions = {
+  homeCurrency?: string;
+  fxRates?: Record<string, number>;
+};
+
+export type MonthSpendingLine = {
+  category: string;
+  amount: number;
+  transactions: SpendingTxnLike[];
+};
+
+export type MonthSpending = {
+  yearMonth: string;
+  /** Sum of every spending line. Same figure every surface uses for this month. */
+  total: number;
+  lines: MonthSpendingLine[];
+};
+
+function txnMonth(txn: SpendingTxnLike, fallback: string): string {
+  return txn.txMonth || txn.date?.slice(0, 7) || fallback;
+}
+
+function spendingAmount(txn: SpendingTxnLike, options?: MonthSpendingOptions): number {
+  const native = Math.abs(txn.amount);
+  if (!options?.homeCurrency && !options?.fxRates) return native;
+  return Math.abs(
+    toHome(txn.amount, txn.currency, {
+      homeCurrency: options.homeCurrency,
+      fxRates: options.fxRates,
+    }),
+  );
+}
+
+/**
+ * One month of spending and its line items.
  *
- * @param expenseTxns   Output of extractAllTransactions() — already balance-marker filtered.
+ * Dashboard headline, typical month, Spending buckets, cash flow money out,
+ * chat/insights, and drawers must all call this (or a wrapper that does).
+ */
+export function computeMonthSpending(
+  yearMonth: string,
+  expenseTxns: readonly SpendingTxnLike[],
+  options?: MonthSpendingOptions,
+): MonthSpending {
+  const linesByCategory = new Map<string, MonthSpendingLine>();
+  let total = 0;
+
+  for (const txn of expenseTxns) {
+    if (txnMonth(txn, yearMonth) !== yearMonth) continue;
+    if (isBalanceMarker(txn.merchant ?? "")) continue;
+    if (
+      isNotSpending(txn.category ?? "", {
+        debtType: txn.debtType,
+        merchant: txn.merchant,
+      })
+    ) {
+      continue;
+    }
+    const amount = spendingAmount(txn, options);
+    if (amount <= 0) continue;
+    total += amount;
+    const category = (txn.category ?? "Other").trim() || "Other";
+    const existing = linesByCategory.get(category);
+    if (existing) {
+      existing.amount += amount;
+      existing.transactions.push(txn);
+    } else {
+      linesByCategory.set(category, {
+        category,
+        amount,
+        transactions: [txn],
+      });
+    }
+  }
+
+  return {
+    yearMonth,
+    total,
+    lines: Array.from(linesByCategory.values()).sort((a, b) => b.amount - a.amount),
+  };
+}
+
+/**
+ * Typical (median + avg) monthly spending from {@link computeMonthSpending}.
+ * Matches `coreExpensesTotal` in the profile cache.
+ *
+ * @param expenseTxns   Expense rows (profile cache or extractAllTransactions).
  * @param currentMonth  "YYYY-MM" for the current billing period (excluded from history).
  */
 export function computeTypicalSpend(
-  expenseTxns: ExpenseTxnRecord[],
-  currentMonth: string
+  expenseTxns: readonly SpendingTxnLike[],
+  currentMonth: string,
+  options?: MonthSpendingOptions,
 ): TypicalSpend {
-  const coreTxns = expenseTxns.filter(
-    (t) =>
-      !isCoreExcluded(t.category ?? "", {
-        debtType: t.debtType,
-        merchant: t.merchant,
-      })
-  );
-
-  const allMonths = Array.from(new Set(coreTxns.map((t) => t.txMonth))).sort();
+  const allMonths = Array.from(
+    new Set(expenseTxns.map((t) => txnMonth(t, "")).filter(Boolean)),
+  ).sort();
   const historicalMonths = completeMonthsWithData(allMonths, { currentMonth });
 
   if (historicalMonths.length === 0) {
-    // Fall back to current month if no history
-    const currentTotal = coreTxns
-      .filter((t) => t.txMonth === currentMonth)
-      .reduce((s, t) => s + t.amount, 0);
+    const currentTotal = computeMonthSpending(currentMonth, expenseTxns, options).total;
     return { median: currentTotal, avg: currentTotal, monthsTracked: 0 };
   }
 
   const monthTotals = historicalMonths
-    .map((m) => coreTxns.filter((t) => t.txMonth === m).reduce((s, t) => s + t.amount, 0))
+    .map((m) => computeMonthSpending(m, expenseTxns, options).total)
     .filter((v) => v > 0);
 
   if (monthTotals.length === 0) {
