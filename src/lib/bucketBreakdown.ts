@@ -9,7 +9,7 @@ import type { ExpenseTxnRecord, IncomeTxnRecord, AccountSnapshot, DebtPaymentHis
 import type { MonthlyHistoryEntry } from "./financialProfile";
 import type { DebtPaymentReview } from "./types";
 import { getCategoryBucket, type MoneyCoachBucket } from "./moneyCoachBuckets";
-import { isNotSpending } from "./spendingMetrics";
+import { computeMonthSpending } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
 import { resolveDebtServicingKind } from "./debtServicing";
 import { merchantSlug } from "./applyRules";
@@ -116,21 +116,23 @@ export function computeBucketBreakdown(
   // Filter transactions to selected months
   const txnsInWindow = expenseTxns.filter(t => months.includes(t.txMonth));
 
+  // Same rows computeMonthSpending counts for each month (one exclusion rule,
+  // mirrored loan payments counted once), so drawer lines match the card total.
+  const spendingTxnsInWindow = months.flatMap((ym) =>
+    computeMonthSpending(ym, expenseTxns).lines.flatMap(
+      (line) => line.transactions as ExpenseTxnRecord[],
+    ),
+  );
+
   // Group by category
   const categoryMap = new Map<string, ExpenseTxnRecord[]>();
   
-  for (const txn of txnsInWindow) {
-    if (
-      isNotSpending(txn.category, {
-        debtType: txn.debtType,
-        merchant: txn.merchant,
-      })
-    ) {
-      continue;
-    }
-
+  for (const txn of spendingTxnsInWindow) {
     const parentCategory = getParentCategory(txn.category);
-    const txnBucket = getCategoryBucket(txn.category);
+    // Same fold as computeMonthlyBuckets: unknown labels count as Flexible.
+    const mapped = getCategoryBucket(txn.category);
+    const txnBucket: MoneyCoachBucket =
+      mapped === "fixed" || mapped === "essentials" || mapped === "flexible" ? mapped : "flexible";
     if (txnBucket !== bucket) continue;
 
     const existing = categoryMap.get(parentCategory) || [];
