@@ -22,6 +22,11 @@ const layout = readFileSync(resolve(__dirname, "../dailySpendReadLayout.ts"), "u
 const modal = readFileSync(resolve(__dirname, "../ThemeDetailModal.tsx"), "utf8");
 const tracker = readFileSync(resolve(__dirname, "../TrackerCard.tsx"), "utf8");
 const history = readFileSync(resolve(__dirname, "../history/page.tsx"), "utf8");
+const section = readFileSync(resolve(__dirname, "../DailySpendTrackerSection.tsx"), "utf8");
+const trackersPage = readFileSync(
+  resolve(__dirname, "../../trackers/page.tsx"),
+  "utf8",
+);
 
 describe("daily spend page layout", () => {
   it("keeps the page from overflowing on a 390px phone", () => {
@@ -61,6 +66,24 @@ describe("daily spend page layout", () => {
     expect(page).not.toContain("Put it toward a plan");
     expect(page).not.toContain("/api/user/plans");
     expect(page).not.toContain("Reaches it");
+  });
+
+  it("keeps the What-if theme chips driving the preview", () => {
+    expect(page).toContain("DAILY_SPEND_THEMES.map((theme) =>");
+    expect(page).toContain("selectedThemeIds");
+    expect(page).toContain("usualFromDailySpend(data, Array.from(selectedThemeIds))");
+    expect(page).toContain("aria-pressed={on}");
+    expect(page).toContain("trackedThemes: trackableSelection");
+    expect(page).toContain("Turn off Housing to start tracking.");
+  });
+
+  it("shows the daily spend target on Tools → Trackers with the same card and API", () => {
+    expect(trackersPage).toContain("<DailySpendTrackerSection");
+    expect(section).toContain("/api/user/daily-spend/tracker");
+    expect(section).toContain("DailySpendTrackerCard");
+    expect(section).toContain("START_FROM_DAILY_SPEND_LABEL");
+    expect(section).toContain("DAILY_SPEND_HREF");
+    expect(tracker).toContain("TRACKER_HISTORY_HREF");
   });
 
   it("returns focus to the theme row when the modal closes", () => {
