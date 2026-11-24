@@ -21,7 +21,13 @@ import {
   IN_PROGRESS_LABEL,
 } from "./monthAnchor";
 import { formatMonth } from "./dateFormatting";
-import { computeMonthSpending, type MonthSpending, type SpendingTxnLike } from "./spendingMetrics";
+import {
+  computeMonthSpending,
+  monthSpendingAmount,
+  type MonthSpending,
+  type MonthSpendingOptions,
+  type SpendingTxnLike,
+} from "./spendingMetrics";
 import { spendingHrefForCategories } from "./spendingMultiCategory";
 import {
   buildMerchantAliasResolver,
@@ -72,6 +78,12 @@ export const THEME_SPENDING_CATEGORIES: Record<DailySpendThemeId, string[]> = {
   housing: ["Housing"],
   "getting-around": ["Transportation"],
   fun: ["Entertainment"],
+};
+
+/** Where Daily spend counts more than the linked Spending view shows. */
+export const THEME_SPENDING_NOTE: Partial<Record<DailySpendThemeId, string>> = {
+  housing:
+    "Also counted here: Property Tax, Tenant Insurance and mortgage payments filed under Debt, which Spending's Housing view lists elsewhere.",
 };
 
 /** Plain-language list of what Daily spend includes (replaces the old “bills left out” note). */
@@ -491,12 +503,15 @@ export function themeAmountsFromCategories(
 }
 
 /** Theme totals from the same counted rows {@link computeMonthSpending} returns. */
-export function themeAmountsFromSpending(spending: MonthSpending): ThemeMonthAmounts {
+export function themeAmountsFromSpending(
+  spending: MonthSpending,
+  options?: MonthSpendingOptions,
+): ThemeMonthAmounts {
   const amounts = emptyThemeAmounts();
   for (const line of spending.lines) {
     if (line.transactions.length > 0) {
       for (const txn of line.transactions) {
-        addThemeAmount(amounts, txn.category ?? line.category, spendingAmountOf(txn, line), {
+        addThemeAmount(amounts, txn.category ?? line.category, monthSpendingAmount(txn, options), {
           debtType: txn.debtType,
         });
       }
@@ -507,15 +522,6 @@ export function themeAmountsFromSpending(spending: MonthSpending): ThemeMonthAmo
   return amounts;
 }
 
-function spendingAmountOf(
-  txn: SpendingTxnLike,
-  line: MonthSpending["lines"][number],
-): number {
-  const lineTotal = line.transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-  if (lineTotal <= 0) return 0;
-  // Preserve FX-converted line.amount; split across the counted rows.
-  return (Math.abs(txn.amount) / lineTotal) * line.amount;
-}
 
 /** Calendar days in a YYYY-MM month. */
 export function calendarDaysInMonth(yearMonth: string): number {
@@ -894,6 +900,7 @@ function buildThemeDetail(
     ),
     series: seriesForTheme(themeId, amountsFor, currentYm, daysElapsed, firstDataMonth),
     spendingHref: spendingHrefForTheme(themeId),
+    ...(THEME_SPENDING_NOTE[themeId] ? { spendingNote: THEME_SPENDING_NOTE[themeId] } : {}),
   };
 }
 
@@ -935,7 +942,10 @@ export function buildDailySpend(input: DailySpendInput): DailySpendResult {
   };
 
   const amountsFor = (yearMonth: string): ThemeMonthAmounts =>
-    themeAmountsFromSpending(spendingFor(yearMonth));
+    themeAmountsFromSpending(spendingFor(yearMonth), {
+      homeCurrency: currency,
+      fxRates: input.fxRates,
+    });
 
   const windowAmounts = windowMonths.map(amountsFor);
   const priorAmounts = priorMonths.map(amountsFor);
