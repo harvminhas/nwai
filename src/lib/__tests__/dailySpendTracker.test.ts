@@ -9,12 +9,15 @@ import {
   buildDailySpendTrackerView,
   createTrackerRecord,
   HOUSING_EXCLUDED_FROM_TARGET_NOTE,
+  joinThemeLabels,
   monthHit,
   monthKept,
   monthPromise,
   nextFullCalendarMonth,
   paceDailyFromThemeTotal,
   periodForMonth,
+  sameThemeSelection,
+  trackableThemeIds,
   TRACKED_DAILY_SPEND_THEME_IDS,
   trackedThemeTotal,
   parseTrackerRecord,
@@ -265,5 +268,90 @@ describe("buildDailySpendTrackerView", () => {
     const overIds = view.lastFinished?.themesOverUsual.map((t) => t.id);
     expect(overIds).toContain("food");
     expect(overIds).not.toContain("getting-around");
+  });
+});
+
+describe("What-if chips and the tracker", () => {
+  it("drops Housing and unknown ids from a chip selection, in tracked order", () => {
+    expect(trackableThemeIds(["fun", "housing", "food", "nope"])).toEqual(["food", "fun"]);
+    expect(trackableThemeIds(["housing"])).toEqual([]);
+    expect(trackableThemeIds(null)).toEqual([]);
+  });
+
+  it("starts tracking the selected chips only", () => {
+    const record = createTrackerRecord({
+      targetDaily: 20,
+      usualDailyAtStart: 25,
+      usualByThemeAtStart: { food: 20, "getting-around": 9, fun: 5 },
+      currentYm: "2026-11",
+      trackedThemes: ["food", "fun"],
+    });
+    expect(record.trackedThemes).toEqual(["food", "fun"]);
+    expect(record.usualByThemeAtStart).toEqual({ food: 20, fun: 5 });
+    const parsed = parseTrackerRecord(JSON.parse(JSON.stringify(record)));
+    expect(parsed?.trackedThemes).toEqual(["food", "fun"]);
+  });
+
+  it("never tracks Housing and falls back to all tracked themes when nothing is left", () => {
+    const record = createTrackerRecord({
+      targetDaily: 20,
+      usualDailyAtStart: 25,
+      usualByThemeAtStart: {},
+      currentYm: "2026-11",
+      trackedThemes: ["housing"],
+    });
+    expect(record.trackedThemes).toEqual([...TRACKED_DAILY_SPEND_THEME_IDS]);
+  });
+
+  it("keeps the usual equal to the selected chips' daily rates", () => {
+    const txns = ["2026-08", "2026-09", "2026-10"].flatMap((ym) => [
+      expense({ category: "Groceries", amount: 92, txMonth: ym }),
+      expense({ category: "Rent", amount: 2000, txMonth: ym }),
+      expense({ category: "Gas", amount: 92, txMonth: ym }),
+    ]);
+    const result = buildDailySpend({
+      expenseTxns: txns,
+      accountSnapshots: snapshots as never,
+      debtPaymentHistory: [],
+      userReviews: [],
+      fxRates: {},
+      currency: "CAD",
+      range: "3m",
+    });
+    const rate = (id: string) => result.themes.find((t) => t.id === id)!.dailyRate;
+    expect(usualFromDailySpend(result, ["food"]).usualDaily).toBeCloseTo(rate("food"), 10);
+    expect(usualFromDailySpend(result, ["food", "housing"]).usualDaily).toBeCloseTo(
+      rate("food") + rate("housing"),
+      10,
+    );
+  });
+
+  it("only counts tracked themes in month results", () => {
+    const record = createTrackerRecord({
+      targetDaily: 10,
+      usualDailyAtStart: 12,
+      usualByThemeAtStart: { food: 12 },
+      currentYm: "2026-09",
+      trackedThemes: ["food"],
+    });
+    const view = buildDailySpendTrackerView(record, {
+      expenseTxns: [
+        expense({ category: "Groceries", amount: 310, txMonth: "2026-10" }),
+        expense({ category: "Gas", amount: 310, txMonth: "2026-10" }),
+      ],
+      fxRates: {},
+      currency: "CAD",
+    });
+    const october = view.finishedMonths.find((m) => m.yearMonth === "2026-10");
+    expect(october?.actualMonth).toBeCloseTo(310, 6);
+  });
+
+  it("joins labels and compares selections", () => {
+    expect(joinThemeLabels(["fun", "food"])).toBe("Eating and Fun & entertainment");
+    expect(joinThemeLabels(TRACKED_DAILY_SPEND_THEME_IDS)).toBe(
+      "Eating, Getting around, and Fun & entertainment",
+    );
+    expect(sameThemeSelection(["food", "fun"], ["fun", "food"])).toBe(true);
+    expect(sameThemeSelection(["food", "fun", "housing"], ["fun", "food"])).toBe(false);
   });
 });

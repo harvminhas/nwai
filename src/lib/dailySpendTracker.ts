@@ -40,6 +40,36 @@ export const TRACKER_HISTORY_HREF = "/account/tools/daily-spend/history";
 
 const TRACKED_THEME_ID_SET = new Set<string>(TRACKED_DAILY_SPEND_THEME_IDS);
 
+/** "A", "A and B", "A, B, and C" from theme ids, in Daily spend theme order. */
+export function joinThemeLabels(ids: Iterable<string>): string {
+  const wanted = new Set<string>(ids);
+  const labels = DAILY_SPEND_THEMES.filter((t) => wanted.has(t.id)).map((t) => t.label);
+  if (labels.length === 0) return "";
+  if (labels.length === 1) return labels[0];
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
+/**
+ * Themes a tracker can cover from a What-if chip selection: Housing and
+ * unknown ids drop out; order follows {@link TRACKED_DAILY_SPEND_THEME_IDS}.
+ * Empty when nothing trackable is selected.
+ */
+export function trackableThemeIds(ids: Iterable<unknown> | null | undefined): DailySpendThemeId[] {
+  const wanted = new Set<string>();
+  for (const id of ids ?? []) wanted.add(String(id));
+  return TRACKED_DAILY_SPEND_THEME_IDS.filter((id) => wanted.has(id));
+}
+
+/** True when two theme selections hold the same ids. */
+export function sameThemeSelection(a: Iterable<string>, b: Iterable<string>): boolean {
+  const left = new Set<string>(a);
+  const right = new Set<string>(b);
+  if (left.size !== right.size) return false;
+  for (const id of left) if (!right.has(id)) return false;
+  return true;
+}
+
 function nowDate(today?: Date): Date {
   if (today) return today;
   const injected = (globalThis as { __TEST_NOW__?: Date }).__TEST_NOW__;
@@ -241,12 +271,16 @@ export function createTrackerRecord(opts: {
   usualDailyAtStart: number;
   usualByThemeAtStart: Partial<Record<DailySpendThemeId, number>>;
   currentYm: string;
+  /** Chips selected when tracking started; Housing is dropped. Defaults to all tracked themes. */
+  trackedThemes?: readonly DailySpendThemeId[];
   today?: Date;
 }): DailySpendTrackerRecord {
   const now = nowDate(opts.today).toISOString();
   const startMonth = nextFullCalendarMonth(opts.currentYm);
+  const picked = trackableThemeIds(opts.trackedThemes ?? TRACKED_DAILY_SPEND_THEME_IDS);
+  const trackedThemes = picked.length > 0 ? picked : [...TRACKED_DAILY_SPEND_THEME_IDS];
   const usualByThemeAtStart: Partial<Record<DailySpendThemeId, number>> = {};
-  for (const id of TRACKED_DAILY_SPEND_THEME_IDS) {
+  for (const id of trackedThemes) {
     usualByThemeAtStart[id] = opts.usualByThemeAtStart[id] ?? 0;
   }
   return {
@@ -254,7 +288,7 @@ export function createTrackerRecord(opts: {
     usualDailyAtStart: opts.usualDailyAtStart,
     usualByThemeAtStart,
     startMonth,
-    trackedThemes: [...TRACKED_DAILY_SPEND_THEME_IDS],
+    trackedThemes,
     periods: [{ targetDaily: opts.targetDaily, startMonth }],
     startedAt: now,
     updatedAt: now,

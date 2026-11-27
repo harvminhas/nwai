@@ -21,6 +21,7 @@ import {
   transactionMetaLine,
 } from "@/components/transactions/linkTransactions";
 import { TrackerCard } from "./TrackerCard";
+import { DailySpendTrackerSection } from "../daily-spend/DailySpendTrackerSection";
 import {
   computeTrackerTotals,
   trackerCsvFilename,
@@ -126,6 +127,8 @@ export default function TrackersPage() {
             + New Tracker
           </button>
         </div>
+
+        <DailySpendTrackerSection token={token} confirm={confirm} onError={error} />
 
         {trackers.length > 0 && (
           <div className="space-y-3">

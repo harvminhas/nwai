@@ -1,11 +1,13 @@
 /**
  * GET    /api/user/daily-spend/tracker
- * PUT    /api/user/daily-spend/tracker  { targetDaily, range? }
+ * PUT    /api/user/daily-spend/tracker  { targetDaily, range?, trackedThemes? }
  * DELETE /api/user/daily-spend/tracker
  *
  * Thin adapter: auth → users/{uid}/dailySpendTracker/current + financial
  * profile → {@link buildDailySpendTrackerView}. Start tracking freezes
- * usualDailyAtStart from the current Daily spend window.
+ * usualDailyAtStart from the current Daily spend window, over the What-if
+ * chips selected at start (Housing never tracked). Later edits change only
+ * the target.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -20,6 +22,7 @@ import {
   buildDailySpendTrackerView,
   createTrackerRecord,
   parseTrackerRecord,
+  trackableThemeIds,
   usualFromDailySpend,
   type DailySpendTrackerView,
 } from "@/lib/dailySpendTracker";
@@ -70,6 +73,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     const body = (await req.json().catch(() => ({}))) as {
       targetDaily?: unknown;
       range?: unknown;
+      trackedThemes?: unknown;
     };
     const targetDaily = Number(body.targetDaily);
     if (!Number.isFinite(targetDaily) || targetDaily < 0) {
@@ -101,12 +105,17 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
         currency: profile.homeCurrency,
         range,
       });
-      const usual = usualFromDailySpend(spend);
+      const picked = Array.isArray(body.trackedThemes)
+        ? trackableThemeIds(body.trackedThemes)
+        : [];
+      const themes = picked.length > 0 ? picked : undefined;
+      const usual = usualFromDailySpend(spend, themes);
       record = createTrackerRecord({
         targetDaily,
         usualDailyAtStart: usual.usualDaily,
         usualByThemeAtStart: usual.usualByTheme,
         currentYm,
+        trackedThemes: themes,
       });
     } else {
       record = applyTargetEdit(existing, targetDaily, currentYm);
