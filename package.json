@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:contracts": "vitest run src/lib/__tests__/metricDefinitions.contract.test.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

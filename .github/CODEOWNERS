@@ -1,0 +1,4 @@
+# Metric definitions (Net savings, Leftover, monthly spending, Daily spend tracker)
+# are pinned by a contract suite. Changing its expectations changes what a
+# number means and needs Harvinder's explicit sign-off.
+/src/lib/__tests__/metricDefinitions.contract.test.ts @harvminhas
