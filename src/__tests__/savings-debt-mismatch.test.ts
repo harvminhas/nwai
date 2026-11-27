@@ -160,17 +160,17 @@ describe("Net savings card vs drawer consistency", () => {
     );
   }
 
-  test("net savings equals income minus fixed, essentials, and flexible", () => {
+  test("net savings is balances only, not income minus spending", () => {
     const breakdown = coach();
     const savingsBucket = breakdown.buckets.find(b => b.bucket === "savings");
     expect(savingsBucket).toBeDefined();
-    expect(savingsBucket!.monthlyAverage).toBeCloseTo(
-      breakdown.incomeAmount - breakdown.totalSpending,
-      2,
-    );
+    // No account balance history in this fixture → nothing to compare.
+    expect(savingsBucket!.monthlyAverage).toBe(0);
+    // Leftover (income − spending) here is −4,434; Net savings does not follow it.
+    expect(breakdown.incomeAmount - breakdown.totalSpending).toBeCloseTo(-4434, 0);
   });
 
-  test("scheduled debt payments are in fixed and therefore reduce leftover", () => {
+  test("scheduled debt payments are in fixed; they do not change balance-based Net savings", () => {
     const breakdown = coach();
     const fixedBucket = breakdown.buckets.find(b => b.bucket === "fixed");
     const savingsBucket = breakdown.buckets.find(b => b.bucket === "savings");
@@ -178,11 +178,11 @@ describe("Net savings card vs drawer consistency", () => {
     expect(fixedBucket).toBeDefined();
     expect(savingsBucket).toBeDefined();
     expect(fixedBucket!.monthlyAverage).toBeGreaterThan(4000);
-    expect(savingsBucket!.monthlyAverage).toBeCloseTo(
-      breakdown.incomeAmount
-        - (breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage ?? 0)
-        - (breakdown.buckets.find(b => b.bucket === "essentials")?.monthlyAverage ?? 0)
-        - (breakdown.buckets.find(b => b.bucket === "flexible")?.monthlyAverage ?? 0),
+    expect(savingsBucket!.monthlyAverage).toBe(0);
+    expect(breakdown.totalSpending).toBeCloseTo(
+      (breakdown.buckets.find(b => b.bucket === "fixed")?.monthlyAverage ?? 0)
+        + (breakdown.buckets.find(b => b.bucket === "essentials")?.monthlyAverage ?? 0)
+        + (breakdown.buckets.find(b => b.bucket === "flexible")?.monthlyAverage ?? 0),
       2,
     );
   });

@@ -1,6 +1,9 @@
 /**
  * Monthly cash flow — one function for money in, money out, leftover, savings rate.
  *
+ * Leftover (money in − money out) is the Cash Flow page's number. It is not
+ * the dashboard's Net savings, which is balances only (computeWindowSavings).
+ *
  * Built on the same helpers as the Income page, Spending page, and dashboard
  * "Where Your Money Goes" cards:
  *   Money in  = buildIncomeSummary monthly total

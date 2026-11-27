@@ -2,7 +2,7 @@
  * Tests for Net Savings drawer reconciliation.
  * 
  * Requirements:
- * 1. Per-month: three components sum exactly to bar
+ * 1. Per-month: cash + debt components sum exactly to bar (balances only)
  * 2. Account changes sum to components
  * 3. Header equals mean of bars
  * 4. Dashboard card equals header
@@ -169,7 +169,7 @@ describe('Savings Reconciliation', () => {
       months
     );
 
-    // July should be negative due to cash spent (-1000) + new borrowing (-1000) + contrib (200) = -1800
+    // July should be negative due to cash spent (-1000) + new borrowing (-1000) = -2000
     const julyMonth = result.monthlyBreakdown.find(m => m.month === '2026-07');
     expect(julyMonth?.total).toBeLessThan(0);
     expect(julyMonth?.driver).toBeDefined();
@@ -210,29 +210,30 @@ describe('Savings Reconciliation', () => {
       months
     );
 
-    // July: cash -1000, debt -1000 (new borrowing), contrib +200 = -1800
+    // Balances only: Investments & Savings outflows are not added back.
+    // July: cash -1000, debt -1000 (new borrowing) = -2000
     const july = result.monthlyBreakdown.find(m => m.month === '2026-07');
     expect(july?.netCashChange).toBeCloseTo(-1000, 2);
     expect(july?.netDebtChange).toBeCloseTo(-1000, 2); // New borrowing is negative
-    expect(july?.contributionsToOutside).toBeCloseTo(200, 2);
-    expect(july?.total).toBeCloseTo(-1800, 2);
+    expect(july?.contributionsToOutside).toBe(0);
+    expect(july?.total).toBeCloseTo(-2000, 2);
 
-    // August: cash +2000, debt +500 (paid down), contrib +300 = +2800
+    // August: cash +2000, debt +500 (paid down) = +2500
     const august = result.monthlyBreakdown.find(m => m.month === '2026-08');
     expect(august?.netCashChange).toBeCloseTo(2000, 2);
     expect(august?.netDebtChange).toBeCloseTo(500, 2); // Paydown is positive
-    expect(august?.contributionsToOutside).toBeCloseTo(300, 2);
-    expect(august?.total).toBeCloseTo(2800, 2);
+    expect(august?.contributionsToOutside).toBe(0);
+    expect(august?.total).toBeCloseTo(2500, 2);
 
-    // September: cash +1000, debt +500 (paid down), contrib +400 = +1900
+    // September: cash +1000, debt +500 (paid down) = +1500
     const september = result.monthlyBreakdown.find(m => m.month === '2026-09');
     expect(september?.netCashChange).toBeCloseTo(1000, 2);
     expect(september?.netDebtChange).toBeCloseTo(500, 2);
-    expect(september?.contributionsToOutside).toBeCloseTo(400, 2);
-    expect(september?.total).toBeCloseTo(1900, 2);
+    expect(september?.contributionsToOutside).toBe(0);
+    expect(september?.total).toBeCloseTo(1500, 2);
 
-    // Monthly average: (-1800 + 2800 + 1900) / 3 = 2900 / 3 ≈ 967
-    expect(result.monthlyAverage.total).toBeCloseTo(967, 0);
+    // Monthly average: (-2000 + 2500 + 1500) / 3 = 2000 / 3 ≈ 667
+    expect(result.monthlyAverage.total).toBeCloseTo(666.67, 1);
 
     // Window-period account changes
     // Cash: 7000 (Sep end) - 5000 (Jun end) = +2000

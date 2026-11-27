@@ -1,38 +1,39 @@
 /**
- * Savings Calculations — shared data layer for all savings metrics.
- * 
- * SINGLE SOURCE OF TRUTH for savings calculations across dashboard, drawers, and pages.
- * 
- * Key principle: Savings = NET change in financial position
- * 
- * Calculation for month M:
- * Savings = (cash/savings balances at end of M - end of M-1) 
- *         + (total debt at end of M-1 - total debt at end of M)
- *         + contributions to outside accounts not tracked in balances
- * 
- * This is a NET change:
- * - Debt increases subtract from savings (e.g., new FlexLine draw)
- * - Debt transfers net to 0 (paying CC with FlexLine: CC down + FlexLine up = 0)
- * - Can be negative (spent more cash than debt paid)
- * 
- * Balance sources:
- * - Use month-END balances from accountBalanceHistory for ALL accounts
- * - If no balance for a month, carry forward most recent prior balance (any age)
- * - Account with no baseline at or before prior month contributes 0
- * 
- * Accounts included:
- * - Cash/savings: checking, savings (NOT investment accounts)
- * - Debt: credit cards, loans, FlexLine/LOC, mortgage
- * 
- * Excluded (tracked in computeAssetGains):
- * - Investment accounts
- * - Manual assets (home, car)
+ * Savings Calculations — the one Net savings function.
+ *
+ * Net savings for month M is balances only: how much the user's own money
+ * accounts moved between the close of M-1 and the close of M.
+ *
+ *   Net savings(M) = Σ cash accounts  (closing M − closing M-1)
+ *                  + Σ debt accounts  (|closing M-1| − |closing M|)
+ *
+ * - Cash accounts: chequing, savings, cash. A balance going up adds.
+ * - Debt accounts: credit cards, lines of credit, loans, mortgages. Paying
+ *   debt down adds; a card or loan balance going up subtracts.
+ * - Transaction categories never matter. Spending a CA$8,000 withdrawal
+ *   lowers that month by CA$8,000 whether it is tagged Cash & ATM or
+ *   Asset purchase.
+ * - Excluded: investment accounts and assets (house, car, manual assets).
+ *   Money moved into an investment account leaves cash, so it lowers Net
+ *   savings; there is no add-back for Investments & Savings outflows.
+ * - Month-end balances come from accountBalanceHistory, which already
+ *   includes derived month-ends for multi-month statements. A month without
+ *   a balance carries forward the most recent prior balance (any age).
+ * - An account with no balance at or before M-1 has no baseline and adds 0.
+ * - A month where no account has a baseline and its own month-end balance
+ *   is not measured: it is left out of averages instead of counting as 0.
+ * - Balances are converted to the home currency when options are given.
+ *
+ * Used by the dashboard Net savings card and savings rate (moneyCoach),
+ * the Net savings drawer, computeSavingsForRange, and chat. Cash Flow's
+ * "Leftover" (money in − money out) is a different number on purpose.
  */
 
 import type { MonthlyHistoryEntry, AccountBalanceHistory } from "./financialProfile";
 import type { ExpenseTxnRecord } from "./extractTransactions";
 import { isTransferInterestOrCardServicing } from "./spendingMetrics";
 import { getParentCategory } from "./categoryTaxonomy";
+import { toHome } from "./currencyUtils";
 
 /**
  * User confirmation for whether a transaction counts as savings.
@@ -63,39 +64,11 @@ export interface SavingsConfirmation {
   confirmedAt?: string;
 }
 
-/**
- * Get confirmation key for a transaction (merchant + category + accountSlug).
- */
-function getConfirmationKey(merchant: string, category: string, accountSlug: string): string {
-  return `${merchant.toLowerCase().trim()}:${category.toLowerCase().trim()}:${accountSlug}`;
-}
-
-/**
- * Check if a transaction category needs user confirmation.
- * Returns true for ambiguous items like life insurance premiums.
- */
-function needsConfirmation(category: string, merchant: string): boolean {
-  const cat = category.toLowerCase();
-  const merch = merchant.toLowerCase();
-  
-  // Life insurance premiums are ambiguous (protection vs. investment component)
-  if (cat.includes("life") && cat.includes("ins")) return true;
-  if (merch.includes("life") && merch.includes("ins")) return true;
-  
-  // Whole life / universal life with investment component
-  if (merch.includes("whole life") || merch.includes("universal life")) return true;
-  
-  // Add more patterns as needed
-  return false;
-}
-
-/**
- * Calculate number of months between two YYYY-MM strings.
- */
-function getMonthsBetween(startYM: string, endYM: string): number {
-  const [startYear, startMonth] = startYM.split('-').map(Number);
-  const [endYear, endMonth] = endYM.split('-').map(Number);
-  return (endYear - startYear) * 12 + (endMonth - startMonth);
+/** Calendar month before a YYYY-MM month. */
+function previousCalendarMonth(yearMonth: string): string {
+  const [year, month] = yearMonth.split("-").map(Number);
+  const date = new Date(year, month - 2, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
 /**
@@ -158,17 +131,36 @@ function getBalanceForMonth(
  * Check if an account type is a cash/savings account.
  * Includes checking and savings, but NOT investment accounts.
  */
+const CASH_ACCOUNT_TYPES = new Set(["checking", "chequing", "savings", "cash"]);
+
 function isCashAccount(accountType: string): boolean {
-  const type = accountType.toLowerCase();
-  return type === "checking" || type === "savings" || type === "chequing";
+  return CASH_ACCOUNT_TYPES.has(accountType.toLowerCase());
 }
 
 /**
  * Check if an account type is a debt account.
  */
+const DEBT_ACCOUNT_TYPES = new Set([
+  "credit",
+  "credit_card",
+  "loc",
+  "line_of_credit",
+  "loan",
+  "auto_loan",
+  "student_loan",
+  "personal_loan",
+  "mortgage",
+  "other_debt",
+]);
+
 function isDebtAccount(accountType: string): boolean {
-  const type = accountType.toLowerCase();
-  return type === "credit" || type === "loan" || type === "mortgage" || type === "loc";
+  return DEBT_ACCOUNT_TYPES.has(accountType.toLowerCase());
+}
+
+/** Home-currency conversion for Net savings balances. */
+export interface NetSavingsOptions {
+  homeCurrency?: string | null;
+  fxRates?: Record<string, number>;
 }
 
 /**
@@ -213,8 +205,11 @@ export interface MonthSavingsBreakdown {
   month: string;
   netCashChange: number;
   netDebtChange: number;
+  /** Always 0: Investments & Savings outflows are no longer added back. */
   contributionsToOutside: number;
   total: number;
+  /** False when no account had a baseline and its own month-end balance. */
+  measured: boolean;
   /** For negative months, identify the main driver */
   driver?: string;
   /** Per-account details for this month (for expandable view) */
@@ -231,7 +226,9 @@ export interface MonthSavingsBreakdown {
 export interface WindowSavingsResult {
   /** Per-month breakdown (each row sums: cash + debt + contributions = total) */
   monthlyBreakdown: MonthSavingsBreakdown[];
-  /** Monthly average of each component */
+  /** Months that count toward the average (see {@link MonthSavingsBreakdown.measured}). */
+  measuredMonths: string[];
+  /** Monthly average of each component over measured months */
   monthlyAverage: {
     netCashChange: number;
     netDebtChange: number;
@@ -254,9 +251,12 @@ export interface MonthlySavingsResult {
   total: number;
   netCashChange: number;
   netDebtChange: number;
+  /** Always 0: Investments & Savings outflows are no longer added back. */
   contributionsToOutside: number;
-  /** Prior month used for balance comparison */
+  /** Prior calendar month whose closing balances are the baseline */
   priorMonth: string;
+  /** False when no account had a baseline and its own month-end balance. */
+  measured: boolean;
   /** Transactions that need user confirmation */
   needsConfirmation: SavingsConfirmation[];
   /** Detailed breakdown by component */
@@ -327,402 +327,241 @@ export function computeAssetGains(
 }
 
 /**
- * Balance-change savings for one month. NOT used for Net savings.
+ * Net savings for one month — balances only (see the file header).
  *
- * Net savings everywhere labelled "Net savings" is leftover from
- * {@link getMonthlyCashFlow} / {@link averageCashFlow} (money in − money out).
- *
- * This path remains for inspect-savings and regression-report:
- * Savings = cash/savings balance change + debt paydown + outside contributions.
- *
- * `confirmedItems` (`savingsConfirmedItems`) only affects whether ambiguous
- * Investments & Savings merchants (e.g. life insurance) count as outside
- * contributions. Unconfirmed items are omitted; confirmed=false skips them;
- * confirmed=true counts them.
+ * `monthlyHistory`, `expenseTxns`, and `confirmedItems` are accepted for
+ * older callers and ignored: categories and confirmations never change Net
+ * savings. Pass `options` to convert foreign-currency balances.
  */
 export function computeMonthlySavings(
-  monthlyHistory: MonthlyHistoryEntry[],
+  _monthlyHistory: MonthlyHistoryEntry[],
   accountBalanceHistory: AccountBalanceHistory[],
-  expenseTxns: ExpenseTxnRecord[],
+  _expenseTxns: ExpenseTxnRecord[],
   currentMonth: string,
-  confirmedItems: Map<string, boolean> = new Map()
+  _confirmedItems: Map<string, boolean> = new Map(),
+  options?: NetSavingsOptions,
 ): MonthlySavingsResult {
-  const prior = findPriorMonth(monthlyHistory, currentMonth);
-  
-  if (!prior) {
-    // First month or no baseline - return empty result
-    return {
-      total: 0,
-      netCashChange: 0,
-      netDebtChange: 0,
-      contributionsToOutside: 0,
-      priorMonth: '',
-      needsConfirmation: [],
-      details: { cashAccounts: [], debtAccounts: [], contributions: [] },
-    };
-  }
+  const priorMonth = previousCalendarMonth(currentMonth);
+  const inHome = (amount: number, currency: string) =>
+    options ? toHome(amount, currency, { homeCurrency: options.homeCurrency, fxRates: options.fxRates }) : amount;
 
-  const monthsElapsed = getMonthsBetween(prior.yearMonth, currentMonth);
-  const needsConfirmationList: SavingsConfirmation[] = [];
-
-  // Component 1: Net cash/savings balance change
   let netCashChange = 0;
+  let netDebtChange = 0;
+  let measured = false;
   const cashDetails: AccountBalanceDetail[] = [];
-  
-  for (const account of accountBalanceHistory) {
-    if (!isCashAccount(account.accountType)) continue;
-    
-    const currentResult = getBalanceForMonth(account, currentMonth);
-    const priorResult = getBalanceForMonth(account, prior.yearMonth);
-    
-    // Only include if we have a baseline (balance at or before prior month)
-    if (currentResult && priorResult) {
-      const change = currentResult.balance - priorResult.balance;
-      netCashChange += change;
-      
-      cashDetails.push({
-        accountLabel: account.label,
-        slug: account.slug,
-        accountType: account.accountType,
-        priorBalance: priorResult.balance,
-        currentBalance: currentResult.balance,
-        priorCarriedForward: priorResult.carriedForward,
-        currentCarriedForward: currentResult.carriedForward,
-        change,
-      });
-    }
-  }
-
-  // Component 2: Net debt change (debt reduction is positive)
-  // Total debt at M-1 minus total debt at M
-  let totalDebtPrior = 0;
-  let totalDebtCurrent = 0;
   const debtDetails: AccountBalanceDetail[] = [];
-  
+
   for (const account of accountBalanceHistory) {
-    if (!isDebtAccount(account.accountType)) continue;
-    
+    const isCash = isCashAccount(account.accountType);
+    const isDebt = !isCash && isDebtAccount(account.accountType);
+    if (!isCash && !isDebt) continue;
+
     const currentResult = getBalanceForMonth(account, currentMonth);
-    const priorResult = getBalanceForMonth(account, prior.yearMonth);
-    
-    // Only include if we have a baseline
-    if (currentResult && priorResult) {
-      // Debt balances are negative, use absolute values for totals
-      totalDebtPrior += Math.abs(priorResult.balance);
-      totalDebtCurrent += Math.abs(currentResult.balance);
-      
-      const change = Math.abs(priorResult.balance) - Math.abs(currentResult.balance);
-      
-      debtDetails.push({
-        accountLabel: account.label,
-        slug: account.slug,
-        accountType: account.accountType,
-        priorBalance: priorResult.balance,
-        currentBalance: currentResult.balance,
-        priorCarriedForward: priorResult.carriedForward,
-        currentCarriedForward: currentResult.carriedForward,
-        change, // Positive = debt paid down, negative = new borrowing
-      });
+    const priorResult = getBalanceForMonth(account, priorMonth);
+    // No baseline at or before the prior month → this account adds 0.
+    if (!currentResult || !priorResult) continue;
+    if (!currentResult.carriedForward) measured = true;
+
+    const prior = inHome(priorResult.balance, account.currency);
+    const current = inHome(currentResult.balance, account.currency);
+    // Cash: up is saved. Debt: balances may be stored negative; paydown is saved.
+    const change = isCash ? current - prior : Math.abs(prior) - Math.abs(current);
+
+    const detail: AccountBalanceDetail = {
+      accountLabel: account.label,
+      slug: account.slug,
+      accountType: account.accountType,
+      priorBalance: priorResult.balance,
+      currentBalance: currentResult.balance,
+      priorCarriedForward: priorResult.carriedForward,
+      currentCarriedForward: currentResult.carriedForward,
+      change,
+    };
+    if (isCash) {
+      netCashChange += change;
+      cashDetails.push(detail);
+    } else {
+      netDebtChange += change;
+      debtDetails.push(detail);
     }
   }
-  
-  const netDebtChange = totalDebtPrior - totalDebtCurrent;
 
-  // Component 3: Contributions to outside accounts (not tracked in balance history)
-  // These leave the bank system, so add them to savings
-  let contributionsToOutside = 0;
-  const contributionDetails: Array<{ merchant: string; amount: number; category: string; needsConfirmation: boolean }> = [];
-  
-  // Get list of tracked account slugs to avoid double-counting
-  const trackedSlugs = new Set(accountBalanceHistory.map(a => a.slug));
-  
-  // Build account lookup for getting names and last 4
-  const accountLookup = new Map(
-    accountBalanceHistory.map(a => {
-      const last4Match = a.label.match(/\(\.\.\.(\d{4})\)/);
-      const last4 = last4Match ? last4Match[1] : a.slug.slice(-4);
-      return [a.slug, { name: a.label, last4 }];
-    })
-  );
-  
-  for (const t of expenseTxns) {
-    if (t.txMonth !== currentMonth) continue;
-    if (isTransferInterestOrCardServicing(t.category)) continue;
-    
-    const parent = getParentCategory(t.category);
-    if (parent !== "Investments & Savings") continue;
-    
-    // Skip if this transaction goes to a tracked investment account
-    // (those are handled by balance changes in computeAssetGains)
-    // For now, assume all "Investments & Savings" transactions go outside
-    // (refinement: check if destination account is tracked)
-    
-    const amount = Math.abs(t.amount);
-    const key = getConfirmationKey(t.merchant, t.category, t.accountSlug);
-    
-    // Check if this needs user confirmation
-    if (needsConfirmation(t.category, t.merchant)) {
-      const confirmed = confirmedItems.get(key);
-      
-      if (confirmed === undefined) {
-        // Needs confirmation - add to list but don't count yet
-        const accountInfo = accountLookup.get(t.accountSlug);
-        
-        // Only emit if we have account info and non-zero amount
-        if (accountInfo && amount > 0) {
-          needsConfirmationList.push({
-            id: key,
-            merchant: t.merchant,
-            category: t.category,
-            accountSlug: t.accountSlug,
-            accountName: accountInfo.name,
-            accountLast4: accountInfo.last4,
-            amount,
-            date: t.date,
-            txMonth: t.txMonth,
-          });
-        }
-        contributionDetails.push({ merchant: t.merchant, amount, category: t.category, needsConfirmation: true });
-        continue;
-      } else if (!confirmed) {
-        // User said no - skip it
-        continue;
-      }
-      // User said yes - fall through and count it
-    }
-    
-    contributionsToOutside += amount;
-    contributionDetails.push({ merchant: t.merchant, amount, category: t.category, needsConfirmation: false });
-  }
-
-  // Total savings = cash change + debt change + outside contributions
-  const total = netCashChange + netDebtChange + contributionsToOutside;
-
-  // Normalize by months elapsed (handles gaps)
-  const normalize = (val: number) => monthsElapsed > 0 ? val / monthsElapsed : val;
-  
   return {
-    total: normalize(total),
-    netCashChange: normalize(netCashChange),
-    netDebtChange: normalize(netDebtChange),
-    contributionsToOutside: normalize(contributionsToOutside),
-    priorMonth: prior.yearMonth,
-    needsConfirmation: needsConfirmationList,
-    details: {
-      cashAccounts: cashDetails.map(d => ({ ...d, change: normalize(d.change) })),
-      debtAccounts: debtDetails.map(d => ({ ...d, change: normalize(d.change) })),
-      contributions: contributionDetails,
-    },
+    total: netCashChange + netDebtChange,
+    netCashChange,
+    netDebtChange,
+    contributionsToOutside: 0,
+    priorMonth,
+    measured,
+    needsConfirmation: [],
+    details: { cashAccounts: cashDetails, debtAccounts: debtDetails, contributions: [] },
   };
 }
 
 /**
- * Average of {@link computeMonthlySavings} over a window.
- * Not used for Net savings — see {@link averageCashFlow}.
+ * Average monthly Net savings over measured months in `months`.
+ * Same number as {@link computeWindowSavings}`.monthlyAverage.total`.
  */
 export function computeAverageSavings(
   monthlyHistory: MonthlyHistoryEntry[],
   accountBalanceHistory: AccountBalanceHistory[],
   expenseTxns: ExpenseTxnRecord[],
   months: string[],
-  confirmedItems: Map<string, boolean> = new Map()
+  confirmedItems: Map<string, boolean> = new Map(),
+  options?: NetSavingsOptions,
 ): number {
-  if (months.length === 0) return 0;
+  return computeWindowSavings(
+    monthlyHistory,
+    accountBalanceHistory,
+    expenseTxns,
+    months,
+    confirmedItems,
+    options,
+  ).monthlyAverage.total;
+}
 
-  const savingsByMonth = months.map(m => 
-    computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, m, confirmedItems).total
-  );
+function monthAccountDetail(
+  acc: AccountBalanceDetail,
+  accountBalanceHistory: AccountBalanceHistory[],
+  priorMonth: string,
+  month: string,
+): MonthAccountDetail {
+  // Extract last 4 digits from account label (e.g., "TD Checking (...1234)" -> "1234")
+  const last4Match = acc.accountLabel.match(/\(\.\.\.(\d{4})\)/);
+  const last4 = last4Match ? last4Match[1] : acc.slug.slice(-4);
+  const accountHistory = accountBalanceHistory.find((a) => a.slug === acc.slug);
+  const priorResult = accountHistory ? getBalanceForMonth(accountHistory, priorMonth) : null;
+  const currentResult = accountHistory ? getBalanceForMonth(accountHistory, month) : null;
+  return {
+    accountLabel: acc.accountLabel,
+    accountLast4: last4,
+    slug: acc.slug,
+    accountType: acc.accountType,
+    priorBalance: acc.priorBalance,
+    currentBalance: acc.currentBalance,
+    change: acc.change,
+    priorCarriedForward: acc.priorCarriedForward,
+    currentCarriedForward: acc.currentCarriedForward,
+    priorDerived: priorResult?.derived,
+    currentDerived: currentResult?.derived,
+    priorSourceStatement: priorResult?.sourceStatement,
+    currentSourceStatement: currentResult?.sourceStatement,
+    priorActualMonth: priorResult?.actualMonth || "",
+    currentActualMonth: currentResult?.actualMonth || month,
+  };
+}
 
-  const total = savingsByMonth.reduce((sum, s) => sum + s, 0);
-  return total / months.length;
+function negativeMonthDriver(result: MonthlySavingsResult): string | undefined {
+  if (result.total >= 0) return undefined;
+  const cashLosses = result.details.cashAccounts
+    .filter((a) => a.change < 0)
+    .sort((a, b) => a.change - b.change);
+  const debtIncreases = result.details.debtAccounts
+    .filter((a) => a.change < 0) // Negative change = more debt
+    .sort((a, b) => a.change - b.change);
+  if (debtIncreases.length > 0 && cashLosses.length > 0) {
+    return Math.abs(debtIncreases[0].change) > Math.abs(cashLosses[0].change)
+      ? `New borrowing on ${debtIncreases[0].accountLabel}`
+      : `Cash spent down from ${cashLosses[0].accountLabel}`;
+  }
+  if (debtIncreases.length > 0) return `New borrowing on ${debtIncreases[0].accountLabel}`;
+  if (cashLosses.length > 0) return `Cash spent down from ${cashLosses[0].accountLabel}`;
+  return undefined;
 }
 
 /**
- * Per-month balance-change savings for a window.
- * Not used for Net savings — see {@link averageCashFlow}.
+ * Net savings for a window: per-month rows (with per-account detail) and the
+ * monthly average over measured months. The dashboard card, savings rate,
+ * drawer, computeSavingsForRange, and chat all read this.
  */
 export function computeWindowSavings(
   monthlyHistory: MonthlyHistoryEntry[],
   accountBalanceHistory: AccountBalanceHistory[],
   expenseTxns: ExpenseTxnRecord[],
   months: string[],
-  confirmedItems: Map<string, boolean> = new Map()
+  confirmedItems: Map<string, boolean> = new Map(),
+  options?: NetSavingsOptions,
 ): WindowSavingsResult {
-  if (months.length === 0) {
+  const monthlyBreakdown: MonthSavingsBreakdown[] = months.map((month) => {
+    const result = computeMonthlySavings(
+      monthlyHistory,
+      accountBalanceHistory,
+      expenseTxns,
+      month,
+      confirmedItems,
+      options,
+    );
+    const byImpact = (a: MonthAccountDetail, b: MonthAccountDetail) =>
+      Math.abs(b.change) - Math.abs(a.change);
     return {
-      monthlyBreakdown: [],
-      monthlyAverage: { netCashChange: 0, netDebtChange: 0, contributionsToOutside: 0, total: 0 },
-      windowPeriodAccounts: { cashAccounts: [], debtAccounts: [] },
-      needsConfirmation: [],
-    };
-  }
-
-  // Compute per-month savings
-  const monthlyBreakdown: MonthSavingsBreakdown[] = [];
-  const allConfirmations = new Set<string>();
-  
-  for (const month of months) {
-    const result = computeMonthlySavings(monthlyHistory, accountBalanceHistory, expenseTxns, month, confirmedItems);
-    
-    // Build per-month per-account details
-    const monthCashAccounts: MonthAccountDetail[] = result.details.cashAccounts.map(acc => {
-      // Extract last 4 digits from account label (e.g., "TD Checking (...1234)" -> "1234")
-      const last4Match = acc.accountLabel.match(/\(\.\.\.(\d{4})\)/);
-      const last4 = last4Match ? last4Match[1] : acc.slug.slice(-4);
-      
-      // Get the actual balance entries to extract month info
-      const accountHistory = accountBalanceHistory.find(a => a.slug === acc.slug);
-      const priorResult = accountHistory ? getBalanceForMonth(accountHistory, result.priorMonth) : null;
-      const currentResult = accountHistory ? getBalanceForMonth(accountHistory, month) : null;
-      
-      return {
-        accountLabel: acc.accountLabel,
-        accountLast4: last4,
-        slug: acc.slug,
-        accountType: acc.accountType,
-        priorBalance: acc.priorBalance,
-        currentBalance: acc.currentBalance,
-        change: acc.change,
-        priorCarriedForward: acc.priorCarriedForward,
-        currentCarriedForward: acc.currentCarriedForward,
-        priorDerived: priorResult?.derived,
-        currentDerived: currentResult?.derived,
-        priorSourceStatement: priorResult?.sourceStatement,
-        currentSourceStatement: currentResult?.sourceStatement,
-        priorActualMonth: priorResult?.actualMonth || '',
-        currentActualMonth: currentResult?.actualMonth || month,
-      };
-    }).sort((a, b) => Math.abs(b.change) - Math.abs(a.change)); // Sort by absolute impact
-    
-    const monthDebtAccounts: MonthAccountDetail[] = result.details.debtAccounts.map(acc => {
-      const last4Match = acc.accountLabel.match(/\(\.\.\.(\d{4})\)/);
-      const last4 = last4Match ? last4Match[1] : acc.slug.slice(-4);
-      
-      // Get the actual balance entries to extract month info
-      const accountHistory = accountBalanceHistory.find(a => a.slug === acc.slug);
-      const priorResult = accountHistory ? getBalanceForMonth(accountHistory, result.priorMonth) : null;
-      const currentResult = accountHistory ? getBalanceForMonth(accountHistory, month) : null;
-      
-      return {
-        accountLabel: acc.accountLabel,
-        accountLast4: last4,
-        slug: acc.slug,
-        accountType: acc.accountType,
-        priorBalance: acc.priorBalance,
-        currentBalance: acc.currentBalance,
-        change: acc.change,
-        priorCarriedForward: acc.priorCarriedForward,
-        currentCarriedForward: acc.currentCarriedForward,
-        priorDerived: priorResult?.derived,
-        currentDerived: currentResult?.derived,
-        priorSourceStatement: priorResult?.sourceStatement,
-        currentSourceStatement: currentResult?.sourceStatement,
-        priorActualMonth: priorResult?.actualMonth || '',
-        currentActualMonth: currentResult?.actualMonth || month,
-      };
-    }).sort((a, b) => Math.abs(b.change) - Math.abs(a.change)); // Sort by absolute impact
-    
-    // Identify driver for negative months
-    let driver: string | undefined;
-    if (result.total < 0) {
-      // Find account with largest negative impact
-      const cashLosses = result.details.cashAccounts
-        .filter(a => a.change < 0)
-        .sort((a, b) => a.change - b.change); // Most negative first
-      
-      const debtIncreases = result.details.debtAccounts
-        .filter(a => a.change < 0) // Negative change = more debt = bad
-        .sort((a, b) => a.change - b.change);
-      
-      if (debtIncreases.length > 0 && cashLosses.length > 0) {
-        const largestDebtIncrease = Math.abs(debtIncreases[0].change);
-        const largestCashLoss = Math.abs(cashLosses[0].change);
-        
-        if (largestDebtIncrease > largestCashLoss) {
-          driver = `New borrowing on ${debtIncreases[0].accountLabel}`;
-        } else {
-          driver = `Cash spent down from ${cashLosses[0].accountLabel}`;
-        }
-      } else if (debtIncreases.length > 0) {
-        driver = `New borrowing on ${debtIncreases[0].accountLabel}`;
-      } else if (cashLosses.length > 0) {
-        driver = `Cash spent down from ${cashLosses[0].accountLabel}`;
-      }
-    }
-    
-    monthlyBreakdown.push({
       month,
       netCashChange: result.netCashChange,
       netDebtChange: result.netDebtChange,
-      contributionsToOutside: result.contributionsToOutside,
+      contributionsToOutside: 0,
       total: result.total,
-      driver,
+      measured: result.measured,
+      driver: negativeMonthDriver(result),
       accounts: {
-        cashAccounts: monthCashAccounts,
-        debtAccounts: monthDebtAccounts,
-        contributions: result.details.contributions,
+        cashAccounts: result.details.cashAccounts
+          .map((acc) => monthAccountDetail(acc, accountBalanceHistory, result.priorMonth, month))
+          .sort(byImpact),
+        debtAccounts: result.details.debtAccounts
+          .map((acc) => monthAccountDetail(acc, accountBalanceHistory, result.priorMonth, month))
+          .sort(byImpact),
+        contributions: [],
       },
-    });
-    
-    result.needsConfirmation.forEach(c => allConfirmations.add(c.id));
-  }
+    };
+  });
 
-  // Compute monthly averages
+  const measuredRows = monthlyBreakdown.filter((m) => m.measured);
+  const avg = (pick: (m: MonthSavingsBreakdown) => number) =>
+    measuredRows.length > 0
+      ? measuredRows.reduce((sum, m) => sum + pick(m), 0) / measuredRows.length
+      : 0;
   const monthlyAverage = {
-    netCashChange: monthlyBreakdown.reduce((sum, m) => sum + m.netCashChange, 0) / months.length,
-    netDebtChange: monthlyBreakdown.reduce((sum, m) => sum + m.netDebtChange, 0) / months.length,
-    contributionsToOutside: monthlyBreakdown.reduce((sum, m) => sum + m.contributionsToOutside, 0) / months.length,
-    total: monthlyBreakdown.reduce((sum, m) => sum + m.total, 0) / months.length,
+    netCashChange: avg((m) => m.netCashChange),
+    netDebtChange: avg((m) => m.netDebtChange),
+    contributionsToOutside: 0,
+    total: avg((m) => m.total),
   };
 
-  // Compute window-period account changes
-  // Start balance = month-end balance of the month before the window (or most recent prior)
-  // End balance = month-end balance of the last month in the window
-  const firstMonth = months[0];
-  const lastMonth = months[months.length - 1];
-  const priorMonth = findPriorMonth(monthlyHistory, firstMonth);
-  
+  // Per-account change over the whole window: close of the month before the
+  // first month → close of the last month (same signs as the monthly rows).
   const cashAccounts: AccountBalanceDetail[] = [];
   const debtAccounts: AccountBalanceDetail[] = [];
-  
-  for (const account of accountBalanceHistory) {
-    const isCash = isCashAccount(account.accountType);
-    const isDebt = isDebtAccount(account.accountType);
-    
-    if (!isCash && !isDebt) continue;
-    
-    const endResult = getBalanceForMonth(account, lastMonth);
-    const startResult = priorMonth ? getBalanceForMonth(account, priorMonth.yearMonth) : null;
-    
-    if (!endResult || !startResult) continue;
-    
-    // For debt accounts, use absolute values so paydown is positive, borrowing is negative
-    const change = isDebt
-      ? Math.abs(startResult.balance) - Math.abs(endResult.balance)
-      : endResult.balance - startResult.balance;
-    
-    const detail: AccountBalanceDetail = {
-      accountLabel: account.label,
-      slug: account.slug,
-      accountType: account.accountType,
-      priorBalance: startResult.balance,
-      currentBalance: endResult.balance,
-      priorCarriedForward: startResult.carriedForward,
-      currentCarriedForward: endResult.carriedForward,
-      change,
-    };
-    
-    if (isCash) {
-      cashAccounts.push(detail);
-    } else {
-      debtAccounts.push(detail);
+  if (months.length > 0) {
+    const startMonth = previousCalendarMonth(months[0]);
+    const lastMonth = months[months.length - 1];
+    const inHome = (amount: number, currency: string) =>
+      options ? toHome(amount, currency, { homeCurrency: options.homeCurrency, fxRates: options.fxRates }) : amount;
+    for (const account of accountBalanceHistory) {
+      const isCash = isCashAccount(account.accountType);
+      const isDebt = !isCash && isDebtAccount(account.accountType);
+      if (!isCash && !isDebt) continue;
+      const endResult = getBalanceForMonth(account, lastMonth);
+      const startResult = getBalanceForMonth(account, startMonth);
+      if (!endResult || !startResult) continue;
+      const start = inHome(startResult.balance, account.currency);
+      const end = inHome(endResult.balance, account.currency);
+      const detail: AccountBalanceDetail = {
+        accountLabel: account.label,
+        slug: account.slug,
+        accountType: account.accountType,
+        priorBalance: startResult.balance,
+        currentBalance: endResult.balance,
+        priorCarriedForward: startResult.carriedForward,
+        currentCarriedForward: endResult.carriedForward,
+        change: isDebt ? Math.abs(start) - Math.abs(end) : end - start,
+      };
+      (isCash ? cashAccounts : debtAccounts).push(detail);
     }
   }
 
   return {
     monthlyBreakdown,
+    measuredMonths: measuredRows.map((m) => m.month),
     monthlyAverage,
     windowPeriodAccounts: { cashAccounts, debtAccounts },
-    needsConfirmation: [], // Savings confirmations handled via shared review framework
+    needsConfirmation: [],
   };
 }

@@ -5,7 +5,7 @@
 
 import type { BucketDetailedBreakdown } from "./bucketBreakdown";
 import type { DetailedIncomeMetrics } from "./incomeMetrics";
-import type { LeftoverMonthBreakdown } from "./monthlyCashFlow";
+import type { MonthSavingsBreakdown } from "./savingsCalculations";
 import type { TimeRange } from "./rangeUtils";
 
 export interface IncomeDrawerData {
@@ -43,11 +43,16 @@ export interface BucketDrawerData {
 export interface SavingsDrawerData {
   type: "savings";
   range: TimeRange;
-  /** Average leftover (money in − money out) over the window */
+  /** Average monthly Net savings (balance change) over measured months — same as the card */
   monthlyAverage: number;
-  moneyIn: number;
-  moneyOut: number;
-  monthlyBreakdown: LeftoverMonthBreakdown[];
+  /** Average change in bank / cash / savings balances */
+  netCashChange: number;
+  /** Average debt paid down (cards, lines of credit, loans, mortgages) */
+  netDebtChange: number;
+  /** One row per window month, with per-account changes */
+  monthlyBreakdown: MonthSavingsBreakdown[];
+  /** Months included in the average (have balances to compare) */
+  measuredMonths: string[];
   homeCurrency: string;
   basisLabel: string;
   /** Optional note like "2 of 3 months" when data is sparse */
