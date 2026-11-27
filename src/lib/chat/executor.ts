@@ -26,6 +26,7 @@ import {
   cashFlowInputFromProfile,
   getMonthlyCashFlow,
 } from "@/lib/monthlyCashFlow";
+import { netSavingsWindow } from "@/lib/savingsForRange";
 import { formatMonthWithStatus, getCurrentMonth, isMonthInProgress } from "@/lib/monthAnchor";
 import { resolveWindowMonths, type TimeRange } from "@/lib/rangeUtils";
 
@@ -832,18 +833,28 @@ export function executeGetSavingsSummary(
     cashFlowInputFromProfile(profile, context),
     { rangeMonths },
   );
-  
+  const netSavings = netSavingsWindow(profile, averaged.months);
+  const net = netSavings.monthlyAverage.total;
+
   return {
     ok: true,
     data: {
-      typical_monthly: fmt(averaged.leftover),
-      leftover: averaged.leftover,
+      typical_monthly: fmt(net),
+      net_savings: net,
+      bank_and_cash_change: netSavings.monthlyAverage.netCashChange,
+      debt_paid_down: netSavings.monthlyAverage.netDebtChange,
       money_in: averaged.moneyIn,
       money_out: averaged.moneyOut,
-      savings_rate: averaged.savingsRate,
+      /** Cash Flow leftover (money in − money out) — not Net savings. */
+      leftover: averaged.leftover,
+      savings_rate: averaged.moneyIn > 0 ? net / averaged.moneyIn : null,
       range_months: averaged.months,
+      months_with_balances: netSavings.measuredMonths,
       currency: home,
-      note: "Net savings is leftover: money in minus money out. Same as the dashboard Net savings card and drawer.",
+      note:
+        "Net savings is the change in bank/cash/savings, credit card, and debt balances (month-end vs the prior month-end). " +
+        "Investments and assets are excluded; spending categories do not affect it. Same as the dashboard Net savings card and drawer. " +
+        "Money in minus money out is Cash Flow leftover, a different number.",
     },
   };
 }

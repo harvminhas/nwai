@@ -26,14 +26,12 @@ export interface UserReviewContext {
    * Savings item confirmations: txId → is_savings (true) or excluded (false).
    *
    * These used to decide whether ambiguous Investments & Savings merchants
-   * (life insurance, etc.) counted as "outside contributions" in the
-   * balance-change savings formula (computeMonthlySavings).
+   * (life insurance, etc.) counted as "outside contributions" in Net savings.
    *
-   * Net savings is now leftover (money in − money out) from
-   * getMonthlyCashFlow, so these reviews do not change the Net savings
-   * card, drawer, or chat answer. Still loaded so existing reviews are
-   * not dropped from Firestore; they only matter if the balance-change
-   * path is used by inspect-savings / regression-report.
+   * Net savings is now balances only (computeWindowSavings: bank, card, and
+   * debt balance changes) with no Investments & Savings add-back, so these
+   * reviews do not change the card, drawer, or chat answer. Still loaded so
+   * existing reviews are not dropped from Firestore.
    */
   savingsConfirmedItems: Map<string, boolean>;
 }

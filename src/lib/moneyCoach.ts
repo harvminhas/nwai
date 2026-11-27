@@ -1,15 +1,17 @@
 /**
  * Money Coach — compute budget breakdown from FinancialProfileCache.
  *
- * Income, spending buckets, leftover, and savings rate all come from
- * {@link getMonthlyCashFlow}. Multi-month values are averages of those
- * per-month results. Net savings = money in − money out (leftover).
+ * Income and spending buckets come from {@link getMonthlyCashFlow}.
+ * Net savings and the savings rate come from balances only
+ * ({@link netSavingsWindow}: bank/cash/savings, card, and debt balance
+ * changes) over the same months. Multi-month values are averages.
  */
 
 import type { FinancialProfileCache } from "./financialProfile";
 import type { DebtPaymentReview } from "./types";
 import { getBucketAdvice, BUCKET_METADATA, type MoneyCoachBucket } from "./moneyCoachBuckets";
 import { averageCashFlow, cashFlowInputFromProfile } from "./monthlyCashFlow";
+import { netSavingsWindow } from "./savingsForRange";
 
 export interface MoneyCoachBucketSummary {
   bucket: MoneyCoachBucket;
@@ -38,7 +40,7 @@ export interface MoneyCoachBreakdown {
   buckets: MoneyCoachBucketSummary[];
   /** Total spending (sum of all bucket averages) */
   totalSpending: number;
-  /** Savings rate: leftover / income */
+  /** Savings rate: Net savings (balance change) / income */
   savingsRate: number;
   /** Coverage metadata */
   coverage: {
@@ -54,13 +56,13 @@ export interface MoneyCoachBreakdown {
 /**
  * Compute Money Coach breakdown with spending buckets and advice.
  *
- * Income, spend, leftover, and bucket averages all come from
- * {@link averageCashFlow}. Default months are last 3 complete months with
- * income or spending — not `profile.monthlyHistory.incomeTotal > 0`.
+ * Income, spend, and bucket averages come from {@link averageCashFlow}.
+ * Default months are last 3 complete months with income or spending — not
+ * `profile.monthlyHistory.incomeTotal > 0`.
  *
- * `savingsConfirmedItems` is not used: Net savings is leftover
- * (money in − money out). Those reviews only affected the retired
- * balance-change path (life-insurance-style contributions).
+ * Net savings is balances only ({@link netSavingsWindow}) over the same
+ * months; months with no balances to compare are left out of its average.
+ * Savings rate = Net savings / income.
  */
 export function computeMoneyCoachBreakdown(
   profile: FinancialProfileCache,
@@ -91,6 +93,7 @@ export function computeMoneyCoachBreakdown(
 
   const avg = averageCashFlow(input, { rangeMonths, lastNComplete: 3 });
   const spendingMonths = avg.months;
+  const netSavings = netSavingsWindow(profile, spendingMonths);
 
   const incomeAmount = avg.moneyIn;
   const totalSpending = avg.moneyOut;
@@ -107,12 +110,12 @@ export function computeMoneyCoachBreakdown(
     fixed: avg.buckets.fixed,
     essentials: avg.buckets.essentials,
     flexible: avg.buckets.flexible,
-    savings: avg.leftover,
+    savings: netSavings.monthlyAverage.total,
     assets: 0,
     uncategorized: 0,
   };
 
-  const savingsRate = avg.savingsRate ?? 0;
+  const savingsRate = incomeAmount > 0 ? netSavings.monthlyAverage.total / incomeAmount : 0;
 
   const bucketSummaries: MoneyCoachBucketSummary[] = (
     Object.keys(bucketAverages) as MoneyCoachBucket[]

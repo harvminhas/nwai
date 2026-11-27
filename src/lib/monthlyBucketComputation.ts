@@ -175,8 +175,9 @@ export function computeMonthlyBuckets(
 
 /**
  * Average Fixed / Essentials / Flexible over the shared cash-flow month set.
- * Net savings (leftover) is {@link averageCashFlow}, not the Investments
- * category that used to live in `averages.savings`.
+ * Leftover is {@link averageCashFlow}; Net savings is balances only
+ * (computeWindowSavings). Neither is the Investments category that used to
+ * live in `averages.savings`.
  */
 export function computeAverageBuckets(
   yearMonths: string[],

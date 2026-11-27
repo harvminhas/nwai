@@ -5,7 +5,8 @@ import { loadUserReviewContext } from "@/lib/userReviewContext";
 import { buildIncomeSummary } from "@/lib/incomeSummary";
 import { computeBucketBreakdown, compute3MonthTrend } from "@/lib/bucketBreakdown";
 import { loadMerchantRenameContext } from "@/app/api/user/merchantRenameContext";
-import { averageCashFlow, cashFlowInputFromProfile } from "@/lib/monthlyCashFlow";
+import { netSavingsWindow } from "@/lib/savingsForRange";
+import { monthsForCashFlowAverage } from "@/lib/cashFlowAverage";
 import { resolveWindowMonths, formatMonthList, formatMonthName, type TimeRange } from "@/lib/rangeUtils";
 import type { MoneyCoachBucket } from "@/lib/moneyCoachBuckets";
 import type { IncomeDrawerData, BucketDrawerData, SavingsDrawerData, DrawerErrorResponse } from "@/lib/drawerTypes";
@@ -203,24 +204,23 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncomeDrawerDa
       return NextResponse.json(response);
     }
 
-    // Savings drawer — leftover from getMonthlyCashFlow (same as Net savings card)
+    // Savings drawer — balances-only Net savings (same function and months as the card)
     if (bucket === "savings") {
       if (windowResult.months.length === 0) {
         return NextResponse.json({ error: "No complete months available for selected window" }, { status: 404 });
       }
 
-      const averaged = averageCashFlow(
-        cashFlowInputFromProfile(profile, reviewContext),
-        { rangeMonths: windowResult.months },
-      );
+      const months = monthsForCashFlowAverage(windowResult.months, { rangeMonths: windowResult.months });
+      const netSavings = netSavingsWindow(profile, months);
 
       const response: SavingsDrawerData = {
         type: "savings",
         range,
-        monthlyAverage: averaged.leftover,
-        moneyIn: averaged.moneyIn,
-        moneyOut: averaged.moneyOut,
-        monthlyBreakdown: averaged.monthlyBreakdown,
+        monthlyAverage: netSavings.monthlyAverage.total,
+        netCashChange: netSavings.monthlyAverage.netCashChange,
+        netDebtChange: netSavings.monthlyAverage.netDebtChange,
+        monthlyBreakdown: netSavings.monthlyBreakdown,
+        measuredMonths: netSavings.measuredMonths,
         homeCurrency: profile.homeCurrency,
         basisLabel: windowResult.months.length > 0
           ? `Monthly average, ${formatMonthList(windowResult.months)}`

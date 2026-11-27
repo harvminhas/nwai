@@ -164,7 +164,8 @@ describe("current-month rule — complete-month consistency", () => {
     expect(cash.leftover).toBe(month.leftover);
     expect(coach.incomeAmount).toBe(month.moneyIn);
     expect(coach.totalSpending).toBe(month.moneyOut);
-    expect(coach.buckets.find((b) => b.bucket === "savings")!.monthlyAverage).toBe(month.leftover);
+    // Net savings is balances only; these fixtures have no balance history.
+    expect(coach.buckets.find((b) => b.bucket === "savings")!.monthlyAverage).toBe(0);
     expect(drawer.moneyIn).toBe(month.moneyIn);
     expect(drawer.moneyOut).toBe(month.moneyOut);
     expect(drawer.leftover).toBe(month.leftover);
@@ -178,7 +179,7 @@ describe("current-month rule — complete-month consistency", () => {
     expect(chatData.money_in).toBe(month.moneyIn);
     expect(chatData.money_out).toBe(month.moneyOut);
     expect(chatData.leftover).toBe(month.leftover);
-    expect(chatData.savings_rate).toBe(month.savingsRate);
+    expect(chatData.savings_rate).toBe(0);
     expect(rate).toBe(Math.round((computeSavingsRate(month.moneyIn, month.moneyOut) ?? 0) * 100));
     expect(month.moneyIn).toBe(5000);
     expect(month.moneyOut).toBe(1200);
@@ -274,7 +275,8 @@ describe("current-month rule — complete-month consistency", () => {
     expect(cash.leftover).toBe(month.leftover);
     expect(coach.incomeAmount).toBe(month.moneyIn);
     expect(coach.totalSpending).toBe(month.moneyOut);
-    expect(coach.buckets.find((b) => b.bucket === "savings")!.monthlyAverage).toBe(month.leftover);
+    // Net savings is balances only; these fixtures have no balance history.
+    expect(coach.buckets.find((b) => b.bucket === "savings")!.monthlyAverage).toBe(0);
     expect(drawer.moneyIn).toBe(month.moneyIn);
     expect(drawer.moneyOut).toBe(month.moneyOut);
     expect(drawer.leftover).toBe(month.leftover);
@@ -288,11 +290,11 @@ describe("current-month rule — complete-month consistency", () => {
     expect(chatData.money_in).toBe(month.moneyIn);
     expect(chatData.money_out).toBe(month.moneyOut);
     expect(chatData.leftover).toBe(month.leftover);
-    expect(chatData.savings_rate).toBe(month.savingsRate);
+    expect(chatData.savings_rate).toBe(0);
     expect(rate).toBe(Math.round((computeSavingsRate(month.moneyIn, month.moneyOut) ?? 0) * 100));
     expect(typical).toBe(month.moneyIn);
     expect(ctx).toContain(
-      `Income ${fmtCad(month.moneyIn)}, Spending ${fmtCad(month.moneyOut)}, Net ${fmtCad(month.leftover)}`,
+      `Income ${fmtCad(month.moneyIn)}, Spending ${fmtCad(month.moneyOut)}, Leftover ${fmtCad(month.leftover)}`,
     );
   });
 });

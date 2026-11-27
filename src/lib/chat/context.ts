@@ -20,6 +20,7 @@ import {
   getMonthlyCashFlow,
   type CashFlowReviews,
 } from "@/lib/monthlyCashFlow";
+import { netSavingsWindow } from "@/lib/savingsForRange";
 import { formatMonthWithStatus, getCurrentMonth, IN_PROGRESS_LABEL, isMonthInProgress } from "@/lib/monthAnchor";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -86,11 +87,11 @@ export function buildChatContext(
       const inProgress = isMonthInProgress(h.yearMonth, current);
       const label = formatMonthWithStatus(h.yearMonth, inProgress);
       const monthSr = !inProgress && h.savingsRate != null
-        ? `${(h.savingsRate * 100).toFixed(0)}% savings`
+        ? `${(h.savingsRate * 100).toFixed(0)}% of income left over`
         : inProgress
           ? IN_PROGRESS_LABEL
           : "n/a";
-      return `  ${h.yearMonth} (${label}): Income ${fmt(h.moneyIn)}, Expenses ${fmt(h.moneyOut)}, Net ${fmt(h.leftover)} (${monthSr})`;
+      return `  ${h.yearMonth} (${label}): Income ${fmt(h.moneyIn)}, Expenses ${fmt(h.moneyOut)}, Leftover ${fmt(h.leftover)} (${monthSr})`;
     });
 
   // ── subscriptions ─────────────────────────────────────────────────────────
@@ -147,14 +148,21 @@ Not available yet (need enough history to compute median monthly core spending).
   const averaged = averageCashFlow(input, { lastNComplete: 3 });
   const income3mo = averaged.moneyIn;
   const spending3mo = averaged.moneyOut;
-  const savings3mo = averaged.leftover;
+  const leftover3mo = averaged.leftover;
+  const netSavings3mo = netSavingsWindow(profile, averaged.months).monthlyAverage.total;
+  const latestNetSavings = month ? netSavingsWindow(profile, [month]) : null;
+  const latestNetSavingsLabel =
+    latestNetSavings && latestNetSavings.measuredMonths.length > 0
+      ? fmt(latestNetSavings.monthlyAverage.total)
+      : "n/a";
   const latestLabel = formatMonthWithStatus(month, isMonthInProgress(month, current));
   const dataEnd = profile.allTxMonths[profile.allTxMonths.length - 1] ?? month;
   
   const snapshot = `== QUICK SNAPSHOT ==
 Net Worth: ${fmt(nw.total)} (Assets: ${fmt(nw.totalAssets)}, Debts: ${fmt(nw.totalDebts)})
-Latest complete month (${latestLabel}): Income ${fmt(income)}, Spending ${fmt(expenses)}, Net ${fmt(net)}, Savings Rate ${sr}
-Last 3 complete months average: Income ${fmt(income3mo)}, Spending ${fmt(spending3mo)}, Savings ${fmt(savings3mo)}
+Latest complete month (${latestLabel}): Income ${fmt(income)}, Spending ${fmt(expenses)}, Leftover ${fmt(net)} (${sr} of income), Net savings ${latestNetSavingsLabel}
+Last 3 complete months average: Income ${fmt(income3mo)}, Spending ${fmt(spending3mo)}, Leftover ${fmt(leftover3mo)}, Net savings ${fmt(netSavings3mo)}
+(Net savings = change in bank/cash/savings, credit card, and debt balances, month-end vs prior month-end; investments and assets excluded. Leftover = income − spending, the Cash Flow page number.)
 Data Range: ${oldest} → ${dataEnd} (${total} month${total !== 1 ? "s" : ""})`;
 
   return `You are a knowledgeable, friendly personal finance assistant.
@@ -263,7 +271,7 @@ NEW comprehensive tools (use these first — they match page calculations exactl
   **Period label**: Always mention the actual period from the tool result (period.label and period.start_month / end_month).
 - Spending analysis / "how much did I spend" → get_spending_summary (buildSpendingSummary, same as Spending page, includes cash)
 - Cash/manual expenses / "recurring cash expenses" → list_cash_expenses (name, amount, frequency, monthly equiv, next due)
-- Savings questions / "how much am I saving" → get_savings_summary (leftover from getMonthlyCashFlow, same as Net savings card and drawer)
+- Savings questions / "how much am I saving" → get_savings_summary (balance change in bank, card, and debt accounts, same as Net savings card and drawer; not Cash Flow leftover)
 - Net worth / "what's my net worth" → get_net_worth (same as dashboard card)
 - Account list / "what accounts do I have" → list_accounts (assets & debts with balance history)
 - Subscriptions only / "what subscriptions" → list_subscriptions (confirmed recurring merchants)

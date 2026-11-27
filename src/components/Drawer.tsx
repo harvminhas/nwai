@@ -717,7 +717,7 @@ function BucketDrawerContent({
           period. {type === "fixed" && "Fixed costs typically include rent, insurance, and scheduled debt payments."}{" "}
           {type === "essentials" && "Essentials cover necessities like groceries and transportation."}{" "}
           {type === "flexible" && "Flexible spending includes dining, shopping, and entertainment."}{" "}
-          {type === "savings" && "This includes investments, extra debt payments beyond minimums, and savings contributions."}
+          {type === "savings" && "Net savings is the change in your bank, card, and debt balances."}
         </p>
       </div>
     </div>
@@ -741,15 +741,18 @@ function SavingsDrawerContent({
       maximumFractionDigits: 0,
     }).format(amount);
 
-  const { monthlyAverage, monthlyBreakdown, basisLabel, moneyIn, moneyOut } = data;
-  const maxAbs = Math.max(...monthlyBreakdown.map((m) => Math.abs(m.leftover)), 1);
+  const { monthlyAverage, monthlyBreakdown, basisLabel, netCashChange, netDebtChange } = data;
+  const measuredRows = monthlyBreakdown.filter((m) => m.measured);
+  const skipped = monthlyBreakdown.filter((m) => !m.measured);
+  const maxAbs = Math.max(...measuredRows.map((m) => Math.abs(m.total)), 1);
+  const monthName = (ym: string) => formatMonthYear(ym).split(" ")[0];
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-gray-200 bg-white p-6">
         <div className="text-center">
           <p className="text-sm font-medium uppercase tracking-wide text-gray-500">
-            Monthly average leftover
+            Monthly average Net savings
           </p>
           <p className={`mt-2 text-4xl font-bold ${getSignColor(monthlyAverage)}`}>
             {fmt(monthlyAverage)}
@@ -759,8 +762,13 @@ function SavingsDrawerContent({
             <p className="mt-1 text-xs text-gray-400">{data.windowNote}</p>
           )}
           <p className="mt-3 text-xs text-gray-500">
-            Money in {fmt(moneyIn)} − money out {fmt(moneyOut)}
+            Bank &amp; cash {fmt(netCashChange)} + debt paid down {fmt(netDebtChange)}
           </p>
+          {skipped.length > 0 && (
+            <p className="mt-1 text-xs text-gray-400">
+              {skipped.map((m) => monthName(m.month)).join(", ")} left out: no balances to compare.
+            </p>
+          )}
         </div>
       </div>
 
@@ -771,6 +779,7 @@ function SavingsDrawerContent({
         <div className="space-y-1.5">
           {monthlyBreakdown.map((month) => {
             const isExpanded = expandedMonth === month.month;
+            const accounts = [...month.accounts.cashAccounts, ...month.accounts.debtAccounts];
             return (
               <div key={month.month}>
                 <button
@@ -778,24 +787,24 @@ function SavingsDrawerContent({
                   className="w-full text-left hover:bg-gray-50 rounded p-1.5 -mx-1.5 transition flex items-center gap-2"
                 >
                   <span className="w-12 text-xs font-medium text-gray-700">
-                    {formatMonthYear(month.month).split(" ")[0]}
+                    {monthName(month.month)}
                   </span>
                   <div className="flex-1">
                     <div className="relative h-2 rounded-full bg-gray-100">
-                      {month.leftover !== 0 && (
+                      {month.measured && month.total !== 0 && (
                         <div
-                          className={`absolute top-0 h-full rounded-full ${getSignBgColor(month.leftover)}`}
+                          className={`absolute top-0 h-full rounded-full ${getSignBgColor(month.total)}`}
                           style={{
-                            width: `${Math.min((Math.abs(month.leftover) / maxAbs) * 100, 100)}%`,
-                            left: month.leftover >= 0 ? "0" : "auto",
-                            right: month.leftover < 0 ? "0" : "auto",
+                            width: `${Math.min((Math.abs(month.total) / maxAbs) * 100, 100)}%`,
+                            left: month.total >= 0 ? "0" : "auto",
+                            right: month.total < 0 ? "0" : "auto",
                           }}
                         />
                       )}
                     </div>
                   </div>
-                  <span className={`w-20 text-right text-xs font-semibold whitespace-nowrap ${getSignColor(month.leftover)}`}>
-                    {fmt(month.leftover)}
+                  <span className={`w-20 text-right text-xs font-semibold whitespace-nowrap ${month.measured ? getSignColor(month.total) : "text-gray-400"}`}>
+                    {month.measured ? fmt(month.total) : "No data"}
                   </span>
                   <svg
                     className={`w-3.5 h-3.5 text-gray-400 transition-transform flex-shrink-0 ${isExpanded ? "rotate-180" : ""}`}
@@ -809,34 +818,29 @@ function SavingsDrawerContent({
 
                 {isExpanded && (
                   <div className="mt-2 ml-2 p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-2 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Money in</span>
-                      <span className="font-semibold text-gray-900">{fmt(month.moneyIn)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Money out</span>
-                      <span className="font-semibold text-gray-900">{fmt(month.moneyOut)}</span>
-                    </div>
-                    <div className="pl-3 space-y-1 text-gray-500">
-                      <div className="flex justify-between">
-                        <span>Fixed</span>
-                        <span>{fmt(month.buckets.fixed)}</span>
+                    {accounts.length === 0 && (
+                      <p className="text-gray-500">No bank, card, or debt balances to compare this month.</p>
+                    )}
+                    {accounts.map((acc) => (
+                      <div key={acc.slug} className="flex justify-between gap-3">
+                        <span className="min-w-0 break-words text-gray-600">
+                          {acc.accountLabel}
+                          {acc.currentCarriedForward && (
+                            <span className="ml-1 text-gray-400">(no statement this month)</span>
+                          )}
+                        </span>
+                        <span className={`shrink-0 font-semibold ${getSignColor(acc.change)}`}>
+                          {fmt(acc.change)}
+                        </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span>Essentials</span>
-                        <span>{fmt(month.buckets.essentials)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Flexible</span>
-                        <span>{fmt(month.buckets.flexible)}</span>
-                      </div>
-                    </div>
+                    ))}
                     <div className="flex justify-between border-t border-gray-200 pt-2">
-                      <span className="font-semibold text-gray-700">Leftover</span>
-                      <span className={`font-semibold ${getSignColor(month.leftover)}`}>
-                        {fmt(month.leftover)}
+                      <span className="font-semibold text-gray-700">Net savings</span>
+                      <span className={`font-semibold ${getSignColor(month.total)}`}>
+                        {fmt(month.total)}
                       </span>
                     </div>
+                    {month.driver && <p className="text-gray-500">{month.driver}</p>}
                   </div>
                 )}
               </div>
@@ -854,32 +858,30 @@ function SavingsDrawerContent({
             <thead>
               <tr className="border-b border-gray-300">
                 <th className="text-left py-2 pr-2 font-semibold text-gray-700">Month</th>
-                <th className="text-right py-2 px-2 font-semibold text-gray-700">In</th>
-                <th className="text-right py-2 px-2 font-semibold text-gray-700">Out</th>
-                <th className="text-right py-2 pl-2 font-semibold text-gray-700">Leftover</th>
+                <th className="text-right py-2 px-2 font-semibold text-gray-700">Bank &amp; cash</th>
+                <th className="text-right py-2 px-2 font-semibold text-gray-700">Debt paid down</th>
+                <th className="text-right py-2 pl-2 font-semibold text-gray-700">Net savings</th>
               </tr>
             </thead>
             <tbody>
-              {monthlyBreakdown.map((month) => (
+              {measuredRows.map((month) => (
                 <tr key={month.month} className="border-b border-gray-200">
-                  <td className="py-2 pr-2 text-gray-900">
-                    {formatMonthYear(month.month).split(" ")[0]}
+                  <td className="py-2 pr-2 text-gray-900">{monthName(month.month)}</td>
+                  <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
+                    {fmt(month.netCashChange)}
                   </td>
                   <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
-                    {fmt(month.moneyIn)}
+                    {fmt(month.netDebtChange)}
                   </td>
-                  <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">
-                    {fmt(month.moneyOut)}
-                  </td>
-                  <td className={`text-right py-2 pl-2 font-semibold whitespace-nowrap ${getSignColor(month.leftover)}`}>
-                    {fmt(month.leftover)}
+                  <td className={`text-right py-2 pl-2 font-semibold whitespace-nowrap ${getSignColor(month.total)}`}>
+                    {fmt(month.total)}
                   </td>
                 </tr>
               ))}
               <tr className="border-t-2 border-gray-400 bg-gray-50 font-semibold">
                 <td className="py-2 pr-2 text-gray-900">Avg</td>
-                <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">{fmt(moneyIn)}</td>
-                <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">{fmt(moneyOut)}</td>
+                <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">{fmt(netCashChange)}</td>
+                <td className="text-right py-2 px-2 text-gray-900 whitespace-nowrap">{fmt(netDebtChange)}</td>
                 <td className={`text-right py-2 pl-2 whitespace-nowrap ${getSignColor(monthlyAverage)}`}>
                   {fmt(monthlyAverage)}
                 </td>
@@ -891,9 +893,10 @@ function SavingsDrawerContent({
 
       <div className="rounded-xl border border-purple-200 bg-purple-50 p-4">
         <p className="text-sm leading-relaxed text-purple-900">
-          <strong>Coach:</strong> Net savings is leftover: money in minus money out,
-          the same number as the dashboard card. Transfers, credit card payments,
-          and investments are left out of money out, same as Income and Spending.
+          <strong>Coach:</strong> Net savings compares your bank, credit card, and debt
+          balances at the end of each month with the end of the month before. Money that
+          stays in the bank or pays debt down counts; investment accounts and assets like a
+          house or car don&apos;t. Same number as the dashboard card.
         </p>
       </div>
     </div>

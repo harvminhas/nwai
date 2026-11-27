@@ -225,10 +225,10 @@ export const CHAT_TOOLS: Tool[] = [
       {
         name: "get_savings_summary",
         description:
-          "Get Net savings using THE SAME leftover as the dashboard card and Savings drawer " +
-          "(getMonthlyCashFlow: money in − money out). " +
-          "Returns typical monthly leftover, money in, and money out. Use for savings rate, " +
-          "savings questions, or 'how much am I saving' queries.",
+          "Get Net savings, THE SAME number as the dashboard card and Savings drawer: " +
+          "the change in bank/cash/savings, credit card, and debt balances from one month-end to the next " +
+          "(investments and assets excluded). Returns typical monthly Net savings, the bank and debt parts, " +
+          "money in, and savings rate. Use for savings rate, savings questions, or 'how much am I saving' queries.",
         parameters: {
           type: SchemaType.OBJECT,
           properties: {
