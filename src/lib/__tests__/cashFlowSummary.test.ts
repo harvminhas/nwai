@@ -291,7 +291,7 @@ describe("totals match dashboard helpers", () => {
     expect(month.categories.some((c) => c.name === "Investments & Savings")).toBe(false);
   });
 
-  it("equals computeMoneyCoachBreakdown income, spending, leftover, and net savings for the same month", () => {
+  it("equals computeMoneyCoachBreakdown income and spending for the same month; Net savings is balances only", () => {
     const input = {
       expenseTxns,
       incomeTxns,
@@ -348,8 +348,10 @@ describe("totals match dashboard helpers", () => {
     expect(fromSeries.leftover).toBe(month.leftover);
     expect(coach.incomeAmount).toBe(month.moneyIn);
     expect(coach.totalSpending).toBe(month.moneyOut);
-    expect(netSavings).toBe(month.leftover);
-    expect(netSavings).toBe(month.moneyIn - month.moneyOut);
+    // Net savings is balances only (no balance history here); leftover stays
+    // income − spending on Cash Flow.
+    expect(netSavings).toBe(0);
+    expect(month.leftover).toBe(month.moneyIn - month.moneyOut);
     expect(month.leftover).toBe(5500);
   });
 
@@ -408,10 +410,8 @@ describe("totals match dashboard helpers", () => {
     );
     expect(income.typicalMonthly).toBeCloseTo(coach.incomeAmount, 5);
     expect(spending.typicalMonthly).toBeCloseTo(coach.totalSpending, 5);
-    expect(coach.buckets.find((b) => b.bucket === "savings")!.monthlyAverage).toBeCloseTo(
-      coach.incomeAmount - coach.totalSpending,
-      5,
-    );
+    // Net savings comes from balances, not income − spending.
+    expect(coach.buckets.find((b) => b.bucket === "savings")!.monthlyAverage).toBe(0);
     expect(coach.months).toEqual(months);
   });
 
